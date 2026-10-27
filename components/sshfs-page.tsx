@@ -1,0 +1,286 @@
+// SSH FS page: mount list on the left (add/edit/delete/connect), remote file
+// browser on the right. Configuration is stored in the plugin's `configs`
+// setting (JSON); secrets stay server-side.
+import { useCallback, useEffect, useState } from "react";
+import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
+import { toast } from "sonner";
+import type { rpcContract } from "../server";
+import type { ConfigView, SshFsConfig } from "../contract";
+import { Button } from "@/components/ui/button";
+import { Icon } from "@/components/ui/icon";
+import { cn } from "@/lib/utils";
+import { RemoteBrowser } from "./remote-browser";
+import { ConfigDialog } from "./config-dialog";
+import { ConfirmDialog } from "./confirm-dialog";
+import { errorMessage } from "./utils";
+
+const SSHF_CHANGED = "sshfs-changed";
+
+function useConfigs() {
+  const rpc = useRpc<typeof rpcContract>();
+  const [configs, setConfigs] = useState<ConfigView[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const reload = useCallback(async () => {
+    try {
+      const result = await rpc.call("configs_list", null);
+      setConfigs(result.configs);
+      setError(null);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  }, [rpc]);
+  useEffect(() => {
+    void reload();
+  }, [reload]);
+  return { configs, error, reload };
+}
+
+export function SshFsPage({ subPath }: { subPath: string }) {
+  const rpc = useRpc<typeof rpcContract>();
+  const { configs, error, reload } = useConfigs();
+
+  const [selected, setSelected] = useState<string | null>(null);
+  const [busyName, setBusyName] = useState<string | null>(null);
+  const [configDialog, setConfigDialog] = useState<{ mode: "add" } | { mode: "edit"; config: ConfigView } | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<ConfigView | null>(null);
+  const [browserKey, setBrowserKey] = useState(0);
+
+  // Any change (this page, the CLI, another window) refreshes the list.
+  useRealtime(SSHF_CHANGED, () => {
+    void reload();
+  });
+
+  // Drop a stale selection (config removed/renamed).
+  useEffect(() => {
+    if (configs === null) return;
+    if (selected !== null && !configs.some((config) => config.name === selected)) {
+      setSelected(null);
+    }
+  }, [configs, selected]);
+
+  const selectedConfig = configs?.find((config) => config.name === selected) ?? null;
+
+  const connect = async (name: string) => {
+    setBusyName(name);
+    try {
+      await rpc.call("mounts_connect", { name });
+      toast.success(`Connected ${name}`);
+      setSelected(name);
+      await reload();
+    } catch (cause) {
+      toast.error(errorMessage(cause));
+    } finally {
+      setBusyName(null);
+    }
+  };
+
+  const disconnect = async (name: string) => {
+    setBusyName(name);
+    try {
+      await rpc.call("mounts_disconnect", { name });
+      await reload();
+    } catch (cause) {
+      toast.error(errorMessage(cause));
+    } finally {
+      setBusyName(null);
+    }
+  };
+
+  const saveConfig = async (config: SshFsConfig) => {
+    if (configs === null) throw new Error("Configs not loaded yet");
+    const exists = configs.some((candidate) => candidate.name === config.name);
+    const next: ConfigView[] = configs.map((candidate) =>
+      candidate.name === config.name ? { ...config, connected: candidate.connected } : candidate,
+    );
+    if (!exists) next.push({ ...config, connected: false });
+    const result = await rpc.call("configs_save", { configs: next.map(stripConnected) });
+    toast.success(exists ? `Saved ${config.name}` : `Added ${config.name}`);
+    setConfigDialog(null);
+    setSelected(config.name);
+    await reload();
+    if (result.configs.some((view) => view.name === config.name)) {
+      await connect(config.name);
+    }
+  };
+
+  const deleteConfig = async () => {
+    if (confirmDelete === null || configs === null) return;
+    const target = confirmDelete;
+    try {
+      await rpc.call("configs_save", {
+        configs: configs.filter((config) => config.name !== target.name).map(stripConnected),
+      });
+      toast.success(`Removed ${target.name}`);
+      if (selected === target.name) setSelected(null);
+      await reload();
+    } catch (cause) {
+      toast.error(errorMessage(cause));
+    } finally {
+      setConfirmDelete(null);
+    }
+  };
+
+  return (
+    <div className="flex h-full min-h-0">
+      {/* Mount list */}
+      <aside className="flex w-72 shrink-0 flex-col border-r border-border bg-card">
+        <div className="flex items-center justify-between border-b border-border px-3 py-2">
+          <h2 className="text-sm font-medium">Mounts</h2>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 text-xs"
+            onClick={() => setConfigDialog({ mode: "add" })}
+          >
+            <Icon name="Plus" className="size-3.5" />
+            Add
+          </Button>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-2">
+          {error !== null ? (
+            <p className="px-2 py-4 text-center text-sm text-destructive">{error}</p>
+          ) : configs === null ? (
+            <p className="px-2 py-4 text-center text-sm text-muted-foreground">Loading configs…</p>
+          ) : configs.length === 0 ? (
+            <div className="space-y-3 px-2 py-6 text-center">
+              <Icon name="Globe" className="mx-auto size-6 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                No SSH FS configs yet. Add one to mount a remote directory.
+              </p>
+              <Button size="sm" onClick={() => setConfigDialog({ mode: "add" })}>
+                Add config
+              </Button>
+            </div>
+          ) : (
+            <ul className="space-y-1">
+              {configs.map((config) => {
+                const active = selected === config.name;
+                const busy = busyName === config.name;
+                return (
+                  <li
+                    key={config.name}
+                    className={cn(
+                      "group rounded-md border border-transparent px-2 py-2",
+                      active && "border-border bg-accent/50",
+                    )}
+                  >
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 text-left"
+                      onClick={() => setSelected(config.name)}
+                    >
+                      <span
+                        className={cn(
+                          "size-2 shrink-0 rounded-full",
+                          config.connected ? "bg-emerald-500" : "bg-muted-foreground/40",
+                        )}
+                        title={config.connected ? "Connected" : "Disconnected"}
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-medium">{config.name}</span>
+                        <span className="block truncate font-mono text-xs text-muted-foreground">
+                          {config.host}
+                          {config.port === undefined || config.port === 22 ? "" : `:${config.port}`}
+                          {" :"}
+                          {config.root}
+                        </span>
+                      </span>
+                    </button>
+                    <div className="mt-1.5 flex items-center gap-1">
+                      <Button
+                        variant={config.connected ? "outline" : "default"}
+                        size="sm"
+                        className="h-6 flex-1 text-xs"
+                        disabled={busy}
+                        onClick={() => {
+                          if (config.connected) void disconnect(config.name);
+                          else void connect(config.name);
+                        }}
+                      >
+                        {busy
+                          ? "…"
+                          : config.connected
+                            ? "Disconnect"
+                            : "Connect"}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
+                        aria-label={`Edit ${config.name}`}
+                        onClick={() => setConfigDialog({ mode: "edit", config })}
+                      >
+                        <Icon name="Pencil" className="size-3.5 text-muted-foreground" />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7 text-muted-foreground hover:text-destructive"
+                        aria-label={`Delete ${config.name}`}
+                        onClick={() => setConfirmDelete(config)}
+                      >
+                        <Icon name="Trash2" className="size-3.5" />
+                      </Button>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+        <p className="border-t border-border px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
+          Passwords/passphrases:{" "}
+          <code className="font-mono">
+            bb plugin config sshfs set secrets &#39;&#123;"name":&#123;"password":"…"&#125;&#125;&#39;
+          </code>
+        </p>
+      </aside>
+
+      {/* Remote browser */}
+      <main className="min-w-0 flex-1">
+        {selectedConfig === null ? (
+          <div className="flex h-full items-center justify-center p-6">
+            <div className="w-full max-w-sm space-y-2 rounded-lg border border-dashed border-border p-6 text-center">
+              <Icon name="FolderOpen" className="mx-auto size-6 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                Pick a mount on the left to browse its files
+                {subPath === "" ? "" : ` (subPath: ${subPath})`}.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <RemoteBrowser
+            // Remount on connect/disconnect so the tree starts fresh.
+            key={`${selectedConfig.name}:${selectedConfig.connected}:${browserKey}`}
+            config={selectedConfig}
+            onStateChange={(connected) => {
+              setBrowserKey((value) => value + 1);
+              void reload();
+              if (!connected) toast.success(`Disconnected ${selectedConfig.name}`);
+            }}
+          />
+        )}
+      </main>
+
+      <ConfigDialog
+        open={configDialog !== null}
+        initial={configDialog !== null && configDialog.mode === "edit" ? configDialog.config : null}
+        onClose={() => setConfigDialog(null)}
+        onSave={saveConfig}
+      />
+      <ConfirmDialog
+        open={confirmDelete !== null}
+        title={`Remove ${confirmDelete?.name ?? ""}?`}
+        description="The config (host, root) is removed; the connection is closed. Remote files are untouched."
+        confirmLabel="Remove"
+        onConfirm={() => void deleteConfig()}
+        onClose={() => setConfirmDelete(null)}
+      />
+    </div>
+  );
+}
+
+function stripConnected(config: ConfigView): SshFsConfig {
+  const { connected: _connected, ...rest } = config;
+  return rest;
+}
