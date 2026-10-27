@@ -16,19 +16,21 @@ bb plugin install .
 ## 1. Add a config
 
 ```sh
-bb plugin config sshfs set configs '[{"name":"prod","host":"deploy@10.0.0.5","root":"/srv/app"}]'
+bb plugin config sshfs set configs '[{"name":"prod","host":"10.0.0.5","user":"deploy","root":"/srv/app"}]'
 ```
 
-`host` accepts `host` or `user@host`; optional fields are `user`, `port`,
-`root` (default `/`; `~/path` expands to the remote home), and `keyPath`.
-You can also manage configs from the **SSH FS** page (add/edit/delete +
-connect), or edit the `configs` setting directly in the plugin settings UI.
+`host` is the host only — the SSH username lives in its own `user` field.
+Optional fields: `port`, `root` (default `/`; `~/path` expands to the remote
+home), and `keyPath`. Names are free-form labels (spaces and uppercase are
+fine). Manage configs from the **SSH FS** page (add/edit/delete + connect) or
+edit the `configs` setting directly in the plugin settings UI.
 
 ## 2. Authenticate
 
 Auth order: `keyPath` (with optional `passphrase`) → `password` → `ssh-agent`
 (`$SSH_AUTH_SOCK`, the vscode-sshfs default). Secrets live server-side in a
-secret setting, never on the wire to the UI:
+secret setting, never on the wire to the UI — the config dialog saves a
+password (or clears one) through a dedicated RPC, and the CLI does the same:
 
 ```sh
 bb plugin config sshfs set secrets '{"prod":{"password":"…","passphrase":"…"}}'

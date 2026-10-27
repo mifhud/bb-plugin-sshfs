@@ -55,10 +55,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       type: "string",
       label: "SSH FS configs (JSON array)",
       description:
-        '[{"name":"prod","host":"user@host","root":"/srv/app",' +
+        '[{"name":"prod","host":"10.0.0.5","user":"deploy","root":"/srv/app",' +
         '"port":22,"keyPath":"/home/me/.ssh/id_ed25519"}]. ' +
-        "Host accepts `host` or `user@host`; root is the mounted directory " +
-        "(`/`, `~/path`, or any absolute POSIX path).",
+        "Host is the host only — the SSH user has its own field. Root is the " +
+        "mounted directory (`/`, `~/path`, or any absolute POSIX path).",
       experimental_multiline: true,
       experimental_schema: configsJsonSchema,
       default: "[]",
@@ -68,7 +68,8 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       label: "Secrets (JSON, server-only)",
       description:
         'JSON object keyed by config name: {"prod":{"password":"…",' +
-        '"passphrase":"…"}}. Set with `bb plugin config sshfs set secrets \'{"prod":{"password":"…"}}\'`.',
+        '"passphrase":"…"}}. Set with `bb plugin config sshfs set secrets \'{"prod":{"password":"…"}}\'` ' +
+        "or from the SSH FS config dialog.",
       secret: true,
       experimental_schema: secretsJsonSchema,
     },
@@ -130,8 +131,12 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     void bb.log.info(`settings changed (${state.configs.length} configs)`);
   });
 
-  function configView(config: SshFsConfig): ConfigView {
-    return { ...config, connected: manager.isConnected(config.name) };
+  function configView(config: SshFsConfig, secrets: ConfigSecrets): ConfigView {
+    return {
+      ...config,
+      connected: manager.isConnected(config.name),
+      hasPassword: secrets[config.name]?.password !== undefined,
+    };
   }
 
   /** Resolve a config + secrets and open/reuse its SSH connection. */
@@ -180,14 +185,28 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
   // -- RPC (frontend data plane) --------------------------------------------
   bb.rpc.register(rpcContract, {
     configs_list: async () => {
-      const { configs } = await loadState();
-      return { configs: configs.map(configView) };
+      const { configs, secrets } = await loadState();
+      return { configs: configs.map((config) => configView(config, secrets)) };
     },
     configs_save: async ({ configs }) => {
       const normalized = normalizeConfigs(validateConfigs(configs));
       await settings.experimental_set({ configs: JSON.stringify(normalized) });
       const state = await loadState();
-      return { configs: state.configs.map(configView) };
+      return { configs: state.configs.map((config) => configView(config, state.secrets)) };
+    },
+    secrets_set: async ({ name, password }) => {
+      const state = await loadState();
+      if (!state.configs.some((config) => config.name === name)) {
+        throw new Error(`No SSH FS config named "${name}". Run "bb sshfs list".`);
+      }
+      const entry = state.secrets[name] ?? {};
+      if (password === null) delete entry.password;
+      else entry.password = password;
+      const next: ConfigSecrets = { ...state.secrets };
+      if (entry.passphrase === undefined && entry.password === undefined) delete next[name];
+      else next[name] = entry;
+      await settings.experimental_set({ secrets: JSON.stringify(next) });
+      return { hasPassword: entry.password !== undefined };
     },
     mounts_connect: async ({ name }) => {
       const info = await connectMount(name);
@@ -268,14 +287,16 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
         summary: "List SSH FS configs and connection state",
         options: { json: { type: "boolean", description: "Print JSON" } },
         run: async ({ options }) => {
-          const { configs } = await loadState();
-          if (options.json) return { exitCode: 0, stdout: JSON.stringify(configs.map(configView)) };
+          const { configs, secrets } = await loadState();
+          if (options.json) {
+            return { exitCode: 0, stdout: JSON.stringify(configs.map((config) => configView(config, secrets))) };
+          }
           if (configs.length === 0) {
             return {
               exitCode: 0,
               stdout:
                 "No SSH FS configs. Add one with\n" +
-                "  bb plugin config sshfs set configs '[{\"name\":\"myhost\",\"host\":\"user@host\",\"root\":\"/\"}]'",
+                "  bb plugin config sshfs set configs '[{\"name\":\"myhost\",\"host\":\"10.0.0.5\",\"user\":\"deploy\",\"root\":\"/\"}]'",
             };
           }
           const lines = configs.map((config) => {

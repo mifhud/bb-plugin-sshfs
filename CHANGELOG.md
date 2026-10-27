@@ -5,8 +5,10 @@
 Initial release: mount remote directories over SSH (SFTP) and browse, open,
 edit, and save files, mirroring vscode-sshfs.
 
-- Configs (`name`, `host`, `user`, `port`, `root`, `keyPath`) stored in the
-  `configs` setting; passwords/passphrases in a server-only `secrets` setting.
+- Configs (free-form `name`, `host` only + `user`, `port`, `root`,
+  `keyPath`) stored in the `configs` setting; passwords/passphrases in a
+  server-only `secrets` setting — saveable and clearable from the config
+  dialog via the `secrets_set` RPC.
 - One reused connection per mount with configurable idle close
   (`idleTimeoutSeconds`).
 - SSH FS sidebar page: mount list with connection state, breadcrumb file

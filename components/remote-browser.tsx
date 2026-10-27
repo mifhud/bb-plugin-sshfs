@@ -355,7 +355,7 @@ export function RemoteBrowser({
                           setDialog({ kind: "rename", entry });
                         }}
                       >
-                        <Icon name="Pencil" className="size-3.5" />
+                        <Icon name="EditFile" className="size-3.5" />
                       </Button>
                       <Button
                         variant="ghost"

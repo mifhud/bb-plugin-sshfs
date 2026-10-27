@@ -5,12 +5,14 @@ browse, open, edit, and save files on a remote server as if they were local.
 
 ## What you get
 
-- **Configs** stored in the plugin's `configs` setting (JSON): `name`,
-  `host` (`host` or `user@host`), optional `user`, `port`, `root` (the
-  mounted directory, `~`-aware), and `keyPath`. Managed from the SSH FS page
-  or `bb plugin config sshfs set configs '…'`.
+- **Configs** stored in the plugin's `configs` setting (JSON): free-form
+  `name`, `host` (host only — the username has its own field), optional
+  `user`, `port`, `root` (the mounted directory, `~`-aware), and `keyPath`.
+  Managed from the SSH FS page or `bb plugin config sshfs set configs '…'`.
 - **Secrets** (passwords/passphrases) in a secret setting, server-only, keyed
-  by config name. Auth order: key → password → ssh-agent.
+  by config name; the config dialog sets/clears a password through a dedicated
+  RPC (`secrets_set`) that never returns the value. Auth order: key →
+  password → ssh-agent.
 - **SSH FS page** (sidebar → SSH FS): mount list with live connection state,
   and a breadcrumb file browser over SFTP — dirs navigate, files open in an
   editor tab, with new file / new folder / rename / delete and refresh.

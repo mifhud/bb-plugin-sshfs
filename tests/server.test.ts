@@ -22,7 +22,7 @@ async function callRpc<T>(
 type ConfigsResult = { configs: ConfigView[] };
 
 function makeConfig(overrides: Record<string, unknown> = {}) {
-  return { name: "prod", host: "deploy@example.com", root: "/srv/app", ...overrides };
+  return { name: "prod", host: "example.com", user: "deploy", root: "/srv/app", ...overrides };
 }
 
 async function setup(settings: Record<string, string | number | boolean> = {}) {
@@ -43,11 +43,16 @@ describe("RPC", () => {
     const saved = await callRpc<ConfigsResult>(harness, "configs_save", {
       configs: [makeConfig()],
     });
-    expect(saved.configs).toEqual([{ ...makeConfig(), connected: false }]);
+    expect(saved.configs).toEqual([{ ...makeConfig(), connected: false, hasPassword: false }]);
 
     const listed = await callRpc<ConfigsResult>(harness, "configs_list", null);
     expect(listed.configs).toHaveLength(1);
-    expect(listed.configs[0]).toMatchObject({ name: "prod", host: "deploy@example.com" });
+    expect(listed.configs[0]).toMatchObject({
+      name: "prod",
+      host: "example.com",
+      user: "deploy",
+      hasPassword: false,
+    });
     expect(harness.realtimeSignals.some((signal) => signal.channel === "sshfs-changed")).toBe(true);
   });
 
@@ -61,16 +66,40 @@ describe("RPC", () => {
 
     await expect(
       harness.behavior.callRpc("configs_save", {
-        configs: [{ name: "Bad Name", host: "x" }],
+        configs: [{ name: "", host: "x" }],
       }),
     ).rejects.toThrow(/rpc input validation failed/);
 
-    // Secrets belong in the secrets setting, not the config (strict schema).
+    // Secrets belong in secrets_set, not in the config (strict schema).
     await expect(
       harness.behavior.callRpc("configs_save", {
         configs: [makeConfig({ password: "hunter2" })],
       }),
     ).rejects.toThrow(/rpc input validation failed/);
+  });
+
+  it("sets, keeps, and clears passwords via secrets_set", async () => {
+    const { harness } = await setup({ configs: JSON.stringify([makeConfig()]) });
+
+    const set = await callRpc<{ hasPassword: boolean }>(harness, "secrets_set", {
+      name: "prod",
+      password: "s3cret",
+    });
+    expect(set).toEqual({ hasPassword: true });
+    const listed = await callRpc<ConfigsResult>(harness, "configs_list", null);
+    expect(listed.configs[0]?.hasPassword).toBe(true);
+    // The value itself never appears in views.
+    expect(JSON.stringify(listed)).not.toContain("s3cret");
+
+    const clear = await callRpc<{ hasPassword: boolean }>(harness, "secrets_set", {
+      name: "prod",
+      password: null,
+    });
+    expect(clear).toEqual({ hasPassword: false });
+
+    await expect(
+      harness.behavior.callRpc("secrets_set", { name: "ghost", password: "x" }),
+    ).rejects.toThrow(/No SSH FS config named "ghost"/);
   });
 
   it("disconnects unknown mounts harmlessly and validates input", async () => {
@@ -104,6 +133,7 @@ describe("RPC", () => {
       expect.arrayContaining([
         "configs_list",
         "configs_save",
+        "secrets_set",
         "mounts_connect",
         "mounts_disconnect",
         "fs_list",
@@ -127,9 +157,11 @@ describe("CLI", () => {
     const withConfig = await setup({ configs: JSON.stringify([makeConfig()]) });
     const listed = await withConfig.harness.behavior.runCli(["list"]);
     expect(listed.exitCode).toBe(0);
-    expect(listed.stdout).toMatch(/disconnected\s+prod\s+deploy@example\.com/);
+    expect(listed.stdout).toMatch(/disconnected\s+prod\s+example\.com/);
     const json = await withConfig.harness.behavior.runCli(["list", "--json"]);
-    expect(JSON.parse(json.stdout)).toEqual([{ ...makeConfig(), connected: false }]);
+    expect(JSON.parse(json.stdout)).toEqual([
+      { ...makeConfig(), connected: false, hasPassword: false },
+    ]);
   });
 
   it("fails clearly for unknown configs", async () => {

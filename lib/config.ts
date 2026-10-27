@@ -1,4 +1,4 @@
-// SSH FS config helpers: host parsing and ssh2 connection options.
+// SSH FS config helpers: host validation and ssh2 connection options.
 import { existsSync, readFileSync } from "node:fs";
 import type { ConnectConfig } from "ssh2";
 import {
@@ -9,25 +9,20 @@ import {
 } from "../contract";
 import { normalizeRoot } from "./paths";
 
-/** Split `user@host` into its parts; bare `host` yields no user. */
-export function splitHost(raw: string): { user?: string; host: string } {
-  const at = raw.lastIndexOf("@");
-  if (at <= 0 || at === raw.length - 1) return { host: raw };
-  return { user: raw.slice(0, at), host: raw.slice(at + 1) };
-}
-
-/** Full ssh2 options for one config, with secrets applied. */
+/**
+ * Full ssh2 options for one config, with secrets applied. The SSH username
+ * always comes from the `user` field — `host` is the host only.
+ */
 export function sshConnectConfig(
   config: SshFsConfig,
   secrets: ConfigSecrets,
 ): ConnectConfig {
-  const split = splitHost(config.host);
-  const user = config.user ?? split.user;
+  const user = config.user;
   if (!user) throw new Error(`No SSH user for "${config.host}" (set "user" in the config)`);
   const secret = secrets[config.name] ?? {};
 
   const options: ConnectConfig = {
-    host: split.host,
+    host: config.host,
     port: config.port ?? 22,
     username: user,
     readyTimeout: 10_000,

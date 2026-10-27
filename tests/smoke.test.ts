@@ -250,7 +250,7 @@ describe("end-to-end over a real SSH transport", () => {
     writeFileSync(join(server.home, "hello.txt"), "hello from the smoke test\n");
 
     const manager = new SftpManager({ idleTimeoutMs: 0 });
-    const config = { name: "smoke", host: `${USER}@127.0.0.1`, port: server.port, root: "/" };
+    const config = { name: "smoke", host: "127.0.0.1", user: USER, port: server.port, root: "/" };
     const options = sshConnectConfig(config, { smoke: { password: PASSWORD } });
 
     // Browse: list the mount root.
@@ -307,7 +307,7 @@ describe("end-to-end over a real SSH transport", () => {
     writeFileSync(join(server.home, "home.txt"), "in home");
 
     const manager = new SftpManager({ idleTimeoutMs: 0 });
-    const config = { name: "home", host: `${USER}@127.0.0.1`, port: server.port, root: "~" };
+    const config = { name: "home", host: "127.0.0.1", user: USER, port: server.port, root: "~" };
     const options = sshConnectConfig(config, { home: { password: PASSWORD } });
 
     // root "~" resolves via exec "$HOME" to the smoke home dir.

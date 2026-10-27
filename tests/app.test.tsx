@@ -17,9 +17,11 @@ const neverCalled = (): never => {
 
 const PROD_VIEW = {
   name: "prod",
-  host: "deploy@example.com",
+  host: "example.com",
+  user: "deploy",
   root: "/srv/app",
   connected: false,
+  hasPassword: false,
 };
 
 describe("SSH FS page", () => {
@@ -33,6 +35,7 @@ describe("SSH FS page", () => {
         rpc: {
           configs_list: () => ({ configs: [PROD_VIEW] }),
           configs_save: neverCalled,
+          secrets_set: neverCalled,
           mounts_connect: ({ name }: { name: string }) => {
             connectCalls.push(name);
             return { connected: true, root: "/srv/app", user: "deploy", host: "example.com", port: 22 };
@@ -49,7 +52,7 @@ describe("SSH FS page", () => {
     );
 
     await slot.findByText("prod");
-    await slot.findByText(/deploy@example\.com/);
+    await slot.findByText(/example\.com/);
 
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await waitFor(() => expect(connectCalls).toEqual(["prod"]));
@@ -65,6 +68,7 @@ describe("SSH FS page", () => {
         rpc: {
           configs_list: () => ({ configs: [] }),
           configs_save: neverCalled,
+          secrets_set: neverCalled,
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
           fs_list: neverCalled,
@@ -95,6 +99,7 @@ describe("Remote file editor", () => {
         rpc: {
           configs_list: neverCalled,
           configs_save: neverCalled,
+          secrets_set: neverCalled,
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
           fs_list: neverCalled,
@@ -139,6 +144,7 @@ describe("Remote file editor", () => {
         rpc: {
           configs_list: neverCalled,
           configs_save: neverCalled,
+          secrets_set: neverCalled,
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
           fs_list: neverCalled,

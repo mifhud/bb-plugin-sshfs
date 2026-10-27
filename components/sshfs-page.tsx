@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { RemoteBrowser } from "./remote-browser";
-import { ConfigDialog } from "./config-dialog";
+import { ConfigDialog, type PasswordAction } from "./config-dialog";
 import { ConfirmDialog } from "./confirm-dialog";
 import { errorMessage } from "./utils";
 
@@ -86,14 +86,22 @@ export function SshFsPage({ subPath }: { subPath: string }) {
     }
   };
 
-  const saveConfig = async (config: SshFsConfig) => {
+  const saveConfig = async (config: SshFsConfig, passwordAction?: PasswordAction) => {
     if (configs === null) throw new Error("Configs not loaded yet");
     const exists = configs.some((candidate) => candidate.name === config.name);
     const next: ConfigView[] = configs.map((candidate) =>
-      candidate.name === config.name ? { ...config, connected: candidate.connected } : candidate,
+      candidate.name === config.name
+        ? { ...config, connected: candidate.connected, hasPassword: candidate.hasPassword }
+        : candidate,
     );
-    if (!exists) next.push({ ...config, connected: false });
+    if (!exists) next.push({ ...config, connected: false, hasPassword: false });
     const result = await rpc.call("configs_save", { configs: next.map(stripConnected) });
+    if (passwordAction !== undefined) {
+      await rpc.call("secrets_set", {
+        name: config.name,
+        password: passwordAction.kind === "set" ? passwordAction.value : null,
+      });
+    }
     toast.success(exists ? `Saved ${config.name}` : `Added ${config.name}`);
     setConfigDialog(null);
     setSelected(config.name);
@@ -210,7 +218,7 @@ export function SshFsPage({ subPath }: { subPath: string }) {
                         aria-label={`Edit ${config.name}`}
                         onClick={() => setConfigDialog({ mode: "edit", config })}
                       >
-                        <Icon name="Pencil" className="size-3.5 text-muted-foreground" />
+                        <Icon name="EditFile" className="size-3.5 text-muted-foreground" />
                       </Button>
                       <Button
                         variant="ghost"
@@ -229,7 +237,8 @@ export function SshFsPage({ subPath }: { subPath: string }) {
           )}
         </div>
         <p className="border-t border-border px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-          Passwords/passphrases:{" "}
+          Passwords are stored server-side. Set one from the config dialog or
+          the CLI:{" "}
           <code className="font-mono">
             bb plugin config sshfs set secrets &#39;&#123;"name":&#123;"password":"…"&#125;&#125;&#39;
           </code>
@@ -281,6 +290,6 @@ export function SshFsPage({ subPath }: { subPath: string }) {
 }
 
 function stripConnected(config: ConfigView): SshFsConfig {
-  const { connected: _connected, ...rest } = config;
+  const { connected: _connected, hasPassword: _hasPassword, ...rest } = config;
   return rest;
 }

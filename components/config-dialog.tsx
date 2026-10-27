@@ -1,6 +1,7 @@
-// Add/edit SSH FS config form. Secrets (password/passphrase) are never
-// handled here — they are set server-side with `bb plugin config sshfs
-// set secrets '<json>'` and stay off the wire.
+// Add/edit SSH FS config form. `host` is the host only (the SSH username has
+// its own field), names are free-form, and a password can be saved right here
+// — it goes to the server-only `secrets` setting via RPC, never into the
+// config or the frontend store.
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import {
@@ -14,10 +15,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import type { SshFsConfig } from "../contract";
+import type { ConfigView, SshFsConfig } from "../contract";
 import { errorMessage } from "./utils";
 
-const NAME_PATTERN = /^[a-z0-9][a-z0-9-]{0,62}$/;
+export type PasswordAction = { kind: "set"; value: string } | { kind: "clear" };
 
 export function ConfigDialog({
   open,
@@ -26,10 +27,10 @@ export function ConfigDialog({
   onSave,
 }: {
   open: boolean;
-  /** Null = adding a new config; a config = editing it. */
-  initial: SshFsConfig | null;
+  /** Null = adding a new config; a saved config = editing it. */
+  initial: ConfigView | null;
   onClose: () => void;
-  onSave: (config: SshFsConfig) => Promise<void>;
+  onSave: (config: SshFsConfig, passwordAction?: PasswordAction) => Promise<void>;
 }) {
   const [name, setName] = useState("");
   const [host, setHost] = useState("");
@@ -37,6 +38,8 @@ export function ConfigDialog({
   const [port, setPort] = useState("22");
   const [root, setRoot] = useState("/");
   const [keyPath, setKeyPath] = useState("");
+  const [password, setPassword] = useState("");
+  const [clearPassword, setClearPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -48,19 +51,27 @@ export function ConfigDialog({
     setPort(initial?.port === undefined ? "22" : String(initial.port));
     setRoot(initial?.root ?? "/");
     setKeyPath(initial?.keyPath ?? "");
+    setPassword("");
+    setClearPassword(false);
     setError(null);
     setSaving(false);
   }, [open, initial]);
 
+  const hasSavedPassword = initial?.hasPassword === true;
+
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (saving) return;
-    if (!NAME_PATTERN.test(name)) {
-      setError("Name must be lowercase letters, digits, or dashes");
+    if (name.trim() === "" || name.trim().length > 100) {
+      setError("Name is required (max 100 characters)");
       return;
     }
     if (host.trim() === "") {
-      setError("Host is required (host or user@host)");
+      setError("Host is required");
+      return;
+    }
+    if (host.includes("@")) {
+      setError("Host is the host only — put the username in the User field");
       return;
     }
     const parsedPort = Number.parseInt(port, 10);
@@ -68,17 +79,23 @@ export function ConfigDialog({
       setError("Port must be a number between 1 and 65535");
       return;
     }
+    let passwordAction: PasswordAction | undefined;
+    if (clearPassword) passwordAction = { kind: "clear" };
+    else if (password !== "") passwordAction = { kind: "set", value: password };
     setError(null);
     setSaving(true);
     try {
-      await onSave({
-        name,
-        host: host.trim(),
-        ...(user.trim() === "" ? {} : { user: user.trim() }),
-        ...(port.trim() === "" ? {} : { port: parsedPort }),
-        root: root.trim() === "" ? "/" : root.trim(),
-        ...(keyPath.trim() === "" ? {} : { keyPath: keyPath.trim() }),
-      });
+      await onSave(
+        {
+          name: name.trim(),
+          host: host.trim(),
+          ...(user.trim() === "" ? {} : { user: user.trim() }),
+          ...(port.trim() === "" ? {} : { port: parsedPort }),
+          root: root.trim() === "" ? "/" : root.trim(),
+          ...(keyPath.trim() === "" ? {} : { keyPath: keyPath.trim() }),
+        },
+        passwordAction,
+      );
     } catch (cause) {
       setError(errorMessage(cause));
       setSaving(false);
@@ -97,7 +114,7 @@ export function ConfigDialog({
         </DialogHeader>
         <form onSubmit={submit} className="space-y-3">
           <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="cfg-name">Name</Label>
               <Input
                 id="cfg-name"
@@ -107,7 +124,7 @@ export function ConfigDialog({
                 autoComplete="off"
               />
             </div>
-            <div className="space-y-1.5">
+            <div className="min-w-0 space-y-1.5">
               <Label htmlFor="cfg-port">Port</Label>
               <Input
                 id="cfg-port"
@@ -120,36 +137,34 @@ export function ConfigDialog({
             </div>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="cfg-host">Host (host or user@host)</Label>
+            <Label htmlFor="cfg-host">Host</Label>
             <Input
               id="cfg-host"
               value={host}
               onChange={(event) => setHost(event.target.value)}
-              placeholder="deploy@192.168.1.10"
+              placeholder="10.0.0.5 or my-server.local"
               autoComplete="off"
             />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div className="space-y-1.5">
-              <Label htmlFor="cfg-user">User (optional)</Label>
-              <Input
-                id="cfg-user"
-                value={user}
-                onChange={(event) => setUser(event.target.value)}
-                placeholder="deploy"
-                autoComplete="off"
-              />
-            </div>
-            <div className="space-y-1.5">
-              <Label htmlFor="cfg-key">Key path (optional)</Label>
-              <Input
-                id="cfg-key"
-                value={keyPath}
-                onChange={(event) => setKeyPath(event.target.value)}
-                placeholder="~/.ssh/id_ed25519"
-                autoComplete="off"
-              />
-            </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cfg-user">User</Label>
+            <Input
+              id="cfg-user"
+              value={user}
+              onChange={(event) => setUser(event.target.value)}
+              placeholder="deploy"
+              autoComplete="off"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="cfg-key">Key path</Label>
+            <Input
+              id="cfg-key"
+              value={keyPath}
+              onChange={(event) => setKeyPath(event.target.value)}
+              placeholder="~/.ssh/id_ed25519 (optional)"
+              autoComplete="off"
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="cfg-root">Root (mounted directory)</Label>
@@ -160,6 +175,45 @@ export function ConfigDialog({
               placeholder="/srv/app or ~/code"
               autoComplete="off"
             />
+          </div>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="cfg-password">Password</Label>
+              {hasSavedPassword ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 px-1.5 text-xs text-muted-foreground"
+                  onClick={() => {
+                    setClearPassword(true);
+                    setPassword("");
+                  }}
+                >
+                  Clear saved password
+                </Button>
+              ) : null}
+            </div>
+            <Input
+              id="cfg-password"
+              type="password"
+              value={password}
+              onChange={(event) => {
+                setPassword(event.target.value);
+                setClearPassword(false);
+              }}
+              placeholder={
+                hasSavedPassword
+                  ? "Password saved — leave blank to keep it"
+                  : "Server password (optional)"
+              }
+              autoComplete="new-password"
+            />
+            {hasSavedPassword && clearPassword ? (
+              <p className="text-xs text-muted-foreground">
+                The saved password will be removed on save.
+              </p>
+            ) : null}
           </div>
           {error === null ? null : <p className="text-sm text-destructive">{error}</p>}
           <DialogFooter>

@@ -5,34 +5,38 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeConfigs,
   parseSecrets,
-  splitHost,
   sshConnectConfig,
   validateConfigs,
 } from "../lib/config";
 
-describe("splitHost", () => {
-  it("splits user@host and keeps bare hosts", () => {
-    expect(splitHost("deploy@example.com")).toEqual({ user: "deploy", host: "example.com" });
-    expect(splitHost("example.com")).toEqual({ host: "example.com" });
-    expect(splitHost("@example.com")).toEqual({ host: "@example.com" });
-  });
-});
-
 describe("validateConfigs", () => {
-  it("accepts valid configs and rejects duplicates", () => {
-    const good = [{ name: "prod", host: "deploy@example.com", root: "/srv/app" }];
+  it("accepts free-form names and rejects duplicates", () => {
+    const good = [
+      { name: "My Prod Server", host: "example.com", user: "deploy", root: "/srv/app" },
+      { name: "prod2", host: "10.0.0.5" },
+    ];
     expect(validateConfigs(good)).toEqual(good);
     const duplicate = [
-      { name: "prod", host: "a@x" },
-      { name: "prod", host: "b@y" },
+      { name: "prod", host: "a" },
+      { name: "prod", host: "b" },
     ];
     expect(() => validateConfigs(duplicate)).toThrow(/Duplicate config name "prod"/);
   });
 
-  it("rejects bad names, hosts, and unknown fields with a located message", () => {
-    expect(() => validateConfigs([{ name: "Prod", host: "x" }])).toThrow(/configs\[0\]\.name.*Name/);
-    expect(() => validateConfigs([{ name: "prod", host: "" }])).toThrow(/configs\[0\]\.host.*Host/);
-    expect(() => validateConfigs([{ name: "prod", host: "x", hop: "a" }])).toThrow(/Unrecognized key: "hop"/);
+  it("rejects empty/control-character names and host with a username", () => {
+    expect(() => validateConfigs([{ name: "", host: "x" }])).toThrow(/configs\[0\]\.name.*required/);
+    expect(() => validateConfigs([{ name: "a\u0000b", host: "x" }])).toThrow(/control characters/);
+    expect(() => validateConfigs([{ name: "prod", host: "" }])).toThrow(/configs\[0\]\.host.*required/);
+    expect(() => validateConfigs([{ name: "prod", host: "user@example.com" }])).toThrow(
+      /User field, not in Host/,
+    );
+    expect(() => validateConfigs([{ name: "prod", host: "host with space" }])).toThrow(/spaces/);
+  });
+
+  it("rejects unknown fields with a located message", () => {
+    expect(() => validateConfigs([{ name: "prod", host: "x", hop: "a" }])).toThrow(
+      /Unrecognized key: "hop"/,
+    );
   });
 
   it("rejects non-array input", () => {
@@ -53,15 +57,15 @@ describe("parseSecrets", () => {
 });
 
 describe("sshConnectConfig", () => {
-  it("builds agent-auth options from host/user/port", () => {
-    const config = { name: "dev", host: "root@10.0.0.5", port: 2222, root: "/" };
+  it("builds auth options from the user field and host", () => {
+    const config = { name: "dev", host: "10.0.0.5", user: "root", port: 2222, root: "/" };
     const options = sshConnectConfig(config, {});
     expect(options.host).toBe("10.0.0.5");
     expect(options.port).toBe(2222);
     expect(options.username).toBe("root");
   });
 
-  it("requires a user and needs no keyPath when absent", () => {
+  it("requires a user", () => {
     expect(() => sshConnectConfig({ name: "dev", host: "10.0.0.5" }, {})).toThrow(/No SSH user/);
   });
 
@@ -101,22 +105,12 @@ describe("sshConnectConfig", () => {
       ),
     ).toThrow(/Private key not found/);
   });
-
-  it("applies a password secret without a keyPath", () => {
-    const options = sshConnectConfig(
-      { name: "dev", host: "10.0.0.5", user: "ops" },
-      { dev: { password: "pw" } },
-    );
-    expect(options.password).toBe("pw");
-    const noPassword = sshConnectConfig({ name: "dev", host: "10.0.0.5", user: "ops" }, {});
-    expect(noPassword.password).toBeUndefined();
-  });
 });
 
 describe("normalizeConfigs", () => {
   it("fills defaults and strips blank fields", () => {
     const configs = normalizeConfigs([
-      { name: "dev", host: "root@x", root: "/srv", user: "  ", keyPath: "" },
+      { name: "dev", host: "root", root: "/srv", user: "  ", keyPath: "" },
     ]);
     expect(configs[0]).toMatchObject({ user: undefined, root: "/srv", keyPath: undefined });
   });
