@@ -10,7 +10,7 @@
     "name": "SSH FS",
     "description": "Mount remote directories over SSH (SFTP): browse, open, edit, and save files on a remote server as if they were local, with a `bb sshfs` CLI for agents and scripts.",
     "branding": {
-      "icon": "Globe"
+      "icon": "Terminal"
     },
     "server": "./server.ts",
     "app": "./app.tsx",

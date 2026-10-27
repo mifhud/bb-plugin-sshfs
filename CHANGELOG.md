@@ -15,6 +15,12 @@
 - **Collapsible + resizable mounts panel**: hide the list with the panel
   button (reopened from a `Mounts` button in the browser area) and drag its
   edge to resize; panel size/visibility persist across reloads.
+- **Icon fixes**: SSH FS uses the built-in `Terminal` icon everywhere (nav
+  panel and plugin settings/branding); the mounts show/hide button uses
+  `PanelLeft`, the connection-test button uses `Plug02`, and the editor saves
+  with a real floppy-disk **Save** icon (registered by the plugin) with
+  Reload as an icon button — all names now resolve in the BB host icon set
+  instead of falling back to the default `Zap`.
 
 ## 0.1.0 — 2026-10-27
 

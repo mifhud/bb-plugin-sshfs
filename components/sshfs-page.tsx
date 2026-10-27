@@ -206,7 +206,7 @@ export function SshFsPage({ subPath }: { subPath: string }) {
               aria-label="Hide mounts panel"
               onClick={() => setPanelOpen(false)}
             >
-              <Icon name="PanelLeftClose" className="size-3.5 text-muted-foreground" />
+              <Icon name="PanelLeft" className="size-3.5 text-muted-foreground" />
             </Button>
           </span>
         </div>
@@ -286,7 +286,7 @@ export function SshFsPage({ subPath }: { subPath: string }) {
                         onClick={() => void testConnection(config.name)}
                       >
                         <Icon
-                          name="PlugZap"
+                          name="Plug02"
                           className={cn(
                             "size-3.5 text-muted-foreground",
                             testingName === config.name && "animate-pulse text-foreground",
@@ -348,7 +348,7 @@ export function SshFsPage({ subPath }: { subPath: string }) {
               className="h-7 gap-1 px-2 text-xs"
               onClick={() => setPanelOpen(true)}
             >
-              <Icon name="PanelLeftOpen" className="size-3.5" />
+              <Icon name="PanelLeft" className="size-3.5" />
               Mounts
             </Button>
           </div>

@@ -137,11 +137,24 @@ export function RemoteFileEditor({
               <span className="hidden shrink-0 text-muted-foreground md:inline">
                 {formatBytes(file?.size ?? 0)}
               </span>
-              <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={reload} disabled={saving}>
-                Reload
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label="Reload"
+                onClick={reload}
+                disabled={saving}
+              >
+                <Icon name="ArrowReloadHorizontal" className="size-3.5" />
               </Button>
-              <Button size="sm" className="h-7 text-xs" onClick={() => void save()} disabled={!dirty || saving}>
-                Save
+              <Button
+                size="icon"
+                className="size-7"
+                aria-label="Save"
+                onClick={() => void save()}
+                disabled={!dirty || saving}
+              >
+                <Icon name="Save" className="size-3.5" />
               </Button>
             </>
           )}
