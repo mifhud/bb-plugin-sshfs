@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.2.0 — 2026-10-27
+
+- **Fix remote writes**: the file mode was passed where ssh2 expects the open
+  flags, so real servers rejected saves of 0644 files ("write …: not found")
+  or truncated them empty. Writes now open with proper `w` flags and keep the
+  original permissions.
+- **Test connection**: plug button per mount row (and `bb sshfs test <name>`)
+  verifies SSH auth + SFTP channel + root resolution and reports latency; an
+  already-open connection is reused, not closed.
+- **Multiple servers as tabs**: every connected mount shows as a tab above the
+  browser, so switching between servers is one click (the first connected
+  mount is auto-selected on load).
+- **Collapsible + resizable mounts panel**: hide the list with the panel
+  button (reopened from a `Mounts` button in the browser area) and drag its
+  edge to resize; panel size/visibility persist across reloads.
+
 ## 0.1.0 — 2026-10-27
 
 Initial release: mount remote directories over SSH (SFTP) and browse, open,

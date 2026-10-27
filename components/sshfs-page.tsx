@@ -1,7 +1,7 @@
 // SSH FS page: mount list on the left (add/edit/delete/connect), remote file
 // browser on the right. Configuration is stored in the plugin's `configs`
 // setting (JSON); secrets stay server-side.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "../server";
@@ -41,9 +41,22 @@ export function SshFsPage({ subPath }: { subPath: string }) {
 
   const [selected, setSelected] = useState<string | null>(null);
   const [busyName, setBusyName] = useState<string | null>(null);
+  const [testingName, setTestingName] = useState<string | null>(null);
   const [configDialog, setConfigDialog] = useState<{ mode: "add" } | { mode: "edit"; config: ConfigView } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ConfigView | null>(null);
   const [browserKey, setBrowserKey] = useState(0);
+  const [panelOpen, setPanelOpen] = useState(() => loadBoolean("panelOpen", true));
+  const [panelWidth, setPanelWidth] = useState(() => loadNumber("panelWidth", 288));
+
+  // Remember panel size/visibility across reloads (best-effort).
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("sshfs:panelWidth", String(panelWidth));
+      window.localStorage.setItem("sshfs:panelOpen", panelOpen ? "1" : "0");
+    } catch {
+      // storage unavailable: panel state is session-only
+    }
+  }, [panelWidth, panelOpen]);
 
   // Any change (this page, the CLI, another window) refreshes the list.
   useRealtime(SSHF_CHANGED, () => {
@@ -58,7 +71,44 @@ export function SshFsPage({ subPath }: { subPath: string }) {
     }
   }, [configs, selected]);
 
+  // Auto-select the first connected mount so an open tab is always useful.
+  useEffect(() => {
+    if (selected === null && configs !== null) {
+      const firstConnected = configs.find((config) => config.connected);
+      if (firstConnected !== undefined) setSelected(firstConnected.name);
+    }
+  }, [selected, configs]);
+
   const selectedConfig = configs?.find((config) => config.name === selected) ?? null;
+  const connectedTabs = configs === null ? [] : configs.filter((config) => config.connected);
+
+  // Pointer-driven resize of the mounts panel (clamped, no layout thrash).
+  const onResizeStart = (event: ReactPointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = panelWidth;
+    const onMove = (move: PointerEvent) => {
+      setPanelWidth(Math.min(512, Math.max(176, startWidth + move.clientX - startX)));
+    };
+    const onUp = () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+  };
+
+  const testConnection = async (name: string) => {
+    setTestingName(name);
+    try {
+      const result = await rpc.call("mounts_test", { name });
+      toast.success(`Connection OK (${result.latencyMs} ms)`);
+    } catch (cause) {
+      toast.error(errorMessage(cause));
+    } finally {
+      setTestingName(null);
+    }
+  };
 
   const connect = async (name: string) => {
     setBusyName(name);
@@ -130,19 +180,35 @@ export function SshFsPage({ subPath }: { subPath: string }) {
 
   return (
     <div className="flex h-full min-h-0">
-      {/* Mount list */}
-      <aside className="flex w-72 shrink-0 flex-col border-r border-border bg-card">
+      {/* Mount list (collapsible + resizable) */}
+      {panelOpen ? (
+        <>
+          <aside
+            style={{ width: panelWidth }}
+            className="flex shrink-0 flex-col border-r border-border bg-card"
+          >
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <h2 className="text-sm font-medium">Mounts</h2>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 gap-1 text-xs"
-            onClick={() => setConfigDialog({ mode: "add" })}
-          >
-            <Icon name="Plus" className="size-3.5" />
-            Add
-          </Button>
+          <span className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 text-xs"
+              onClick={() => setConfigDialog({ mode: "add" })}
+            >
+              <Icon name="Plus" className="size-3.5" />
+              Add
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-7"
+              aria-label="Hide mounts panel"
+              onClick={() => setPanelOpen(false)}
+            >
+              <Icon name="PanelLeftClose" className="size-3.5 text-muted-foreground" />
+            </Button>
+          </span>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto p-2">
           {error !== null ? (
@@ -215,6 +281,22 @@ export function SshFsPage({ subPath }: { subPath: string }) {
                         variant="ghost"
                         size="icon"
                         className="size-7"
+                        disabled={testingName === config.name}
+                        aria-label={`Test ${config.name}`}
+                        onClick={() => void testConnection(config.name)}
+                      >
+                        <Icon
+                          name="PlugZap"
+                          className={cn(
+                            "size-3.5 text-muted-foreground",
+                            testingName === config.name && "animate-pulse text-foreground",
+                          )}
+                        />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="size-7"
                         aria-label={`Edit ${config.name}`}
                         onClick={() => setConfigDialog({ mode: "edit", config })}
                       >
@@ -243,32 +325,88 @@ export function SshFsPage({ subPath }: { subPath: string }) {
             bb plugin config sshfs set secrets &#39;&#123;"name":&#123;"password":"…"&#125;&#125;&#39;
           </code>
         </p>
-      </aside>
+          </aside>
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize mounts panel"
+            className="group/resizer relative w-1 shrink-0 cursor-col-resize touch-none"
+            onPointerDown={onResizeStart}
+          >
+            <div className="absolute inset-y-0 left-1/2 w-px -translate-x-1/2 bg-border transition-colors group-hover/resizer:bg-primary/50" />
+          </div>
+        </>
+      ) : null}
 
       {/* Remote browser */}
-      <main className="min-w-0 flex-1">
-        {selectedConfig === null ? (
-          <div className="flex h-full items-center justify-center p-6">
-            <div className="w-full max-w-sm space-y-2 rounded-lg border border-dashed border-border p-6 text-center">
-              <Icon name="FolderOpen" className="mx-auto size-6 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                Pick a mount on the left to browse its files
-                {subPath === "" ? "" : ` (subPath: ${subPath})`}.
-              </p>
-            </div>
+      <main className="flex min-w-0 flex-1 flex-col">
+        {!panelOpen ? (
+          <div className="flex items-center border-b border-border px-2 py-1.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs"
+              onClick={() => setPanelOpen(true)}
+            >
+              <Icon name="PanelLeftOpen" className="size-3.5" />
+              Mounts
+            </Button>
           </div>
-        ) : (
-          <RemoteBrowser
-            // Remount on connect/disconnect so the tree starts fresh.
-            key={`${selectedConfig.name}:${selectedConfig.connected}:${browserKey}`}
-            config={selectedConfig}
-            onStateChange={(connected) => {
-              setBrowserKey((value) => value + 1);
-              void reload();
-              if (!connected) toast.success(`Disconnected ${selectedConfig.name}`);
-            }}
-          />
-        )}
+        ) : null}
+        {connectedTabs.length > 0 ? (
+          <div
+            className="flex items-center gap-1 overflow-x-auto border-b border-border bg-muted/40 px-2 pt-1.5"
+            role="tablist"
+            aria-label="Connected mounts"
+          >
+            {connectedTabs.map((config) => {
+              const active = selected === config.name;
+              return (
+                <button
+                  key={config.name}
+                  type="button"
+                  role="tab"
+                  aria-selected={active}
+                  onClick={() => setSelected(config.name)}
+                  title={`${config.host} :${config.root}`}
+                  className={cn(
+                    "flex h-8 shrink-0 items-center gap-2 rounded-t-md border border-b-0 px-3 text-xs",
+                    active
+                      ? "border-border bg-card text-foreground"
+                      : "border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+                  )}
+                >
+                  <span className="size-1.5 shrink-0 rounded-full bg-emerald-500" />
+                  <span className="max-w-44 truncate">{config.name}</span>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+        <div className="min-h-0 flex-1">
+          {selectedConfig === null ? (
+            <div className="flex h-full items-center justify-center p-6">
+              <div className="w-full max-w-sm space-y-2 rounded-lg border border-dashed border-border p-6 text-center">
+                <Icon name="FolderOpen" className="mx-auto size-6 text-muted-foreground" />
+                <p className="text-sm text-muted-foreground">
+                  Pick a mount on the left to browse its files
+                  {subPath === "" ? "" : ` (subPath: ${subPath})`}.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <RemoteBrowser
+              // Remount on connect/disconnect so the tree starts fresh.
+              key={`${selectedConfig.name}:${selectedConfig.connected}:${browserKey}`}
+              config={selectedConfig}
+              onStateChange={(connected) => {
+                setBrowserKey((value) => value + 1);
+                void reload();
+                if (!connected) toast.success(`Disconnected ${selectedConfig.name}`);
+              }}
+            />
+          )}
+        </div>
       </main>
 
       <ConfigDialog
@@ -292,4 +430,24 @@ export function SshFsPage({ subPath }: { subPath: string }) {
 function stripConnected(config: ConfigView): SshFsConfig {
   const { connected: _connected, hasPassword: _hasPassword, ...rest } = config;
   return rest;
+}
+
+function loadNumber(key: string, fallback: number): number {
+  try {
+    const raw = window.localStorage.getItem(`sshfs:${key}`);
+    if (raw === null) return fallback;
+    const value = Number(raw);
+    return Number.isFinite(value) && value > 0 ? value : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function loadBoolean(key: string, fallback: boolean): boolean {
+  try {
+    const raw = window.localStorage.getItem(`sshfs:${key}`);
+    return raw === null ? fallback : raw !== "0";
+  } catch {
+    return fallback;
+  }
 }

@@ -141,6 +141,11 @@ export const rpcContract = defineRpcContract({
     input: z.object({ name: mountNameSchema }),
     output: z.object({ disconnected: z.boolean() }),
   },
+  /** Authenticate + open SFTP + resolve the root, then close again. */
+  mounts_test: {
+    input: z.object({ name: mountNameSchema }),
+    output: z.object({ ok: z.boolean(), latencyMs: z.number().int().min(0) }),
+  },
   fs_list: {
     input: z.object({ mount: mountNameSchema, path: z.string().min(1).max(4096) }),
     output: z.object({

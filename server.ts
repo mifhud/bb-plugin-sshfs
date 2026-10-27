@@ -147,6 +147,19 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
     return manager.connect(name, config, sshConnectConfig(config, secrets));
   }
 
+  /** Open (or reuse) the mount's connection, then close it unless it was already open. */
+  async function testConnection(name: string): Promise<number> {
+    const { configs, secrets } = await loadState();
+    const config = configs.find((candidate) => candidate.name === name);
+    if (config === undefined) throw new Error(`No SSH FS config named "${name}". Run "bb sshfs list".`);
+    const started = Date.now();
+    const alreadyConnected = manager.isConnected(name);
+    await manager.connect(name, config, sshConnectConfig(config, secrets));
+    const latencyMs = Date.now() - started;
+    if (!alreadyConnected) await manager.disconnect(name);
+    return latencyMs;
+  }
+
   /** Run one file operation against a mount by config name. */
   async function withMount<T>(
     name: string,
@@ -218,6 +231,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       publishState(name, false);
       return { disconnected };
     },
+    mounts_test: async ({ name }) => ({
+      ok: true,
+      latencyMs: await testConnection(name),
+    }),
     fs_list: async ({ mount, path }) => {
       await guardPaths(mount, [path]);
       return withMount(mount, async (session, root) => {
@@ -332,6 +349,18 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
             exitCode: 0,
             stdout: closed ? `Disconnected ${positionals.name}` : `${positionals.name} was not connected`,
           };
+        },
+      }),
+      test: cliCommand({
+        summary: "Verify the SSH connection (auth + SFTP + root) for a config",
+        positionals: [{ name: "name", description: "Config name", required: true }],
+        run: async ({ positionals }) => {
+          try {
+            const latencyMs = await testConnection(positionals.name);
+            return { exitCode: 0, stdout: `OK (${latencyMs} ms)` };
+          } catch (error) {
+            throw cliError(error);
+          }
         },
       }),
       ls: cliCommand({

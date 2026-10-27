@@ -40,6 +40,13 @@ bb plugin config sshfs set secrets '{"prod":{"password":"…","passphrase":"…"
 
 - Open **SSH FS** in the sidebar, click **Connect** on a mount, and browse the
   remote tree with breadcrumbs: dirs navigate, files open in an editor tab.
+  Connected mounts appear as tabs at the top of the browser so you can jump
+  from server to server; the mounts panel (list) can be hidden with the
+  panel button, resized by dragging its edge, and reopened from the `Mounts`
+  button in the browser area.
+- The plug button on a mount row (or `bb sshfs test <name>`) verifies the
+  connection end-to-end: SSH auth, SFTP channel, and root resolution — the
+  connection is closed again unless it was already open.
 - The editor loads the file over SFTP, tracks unsaved changes, and saves back
   with **Save** or Ctrl/Cmd+S. Binary files and files over 4 MiB are refused
   with a clear message.
@@ -50,6 +57,7 @@ bb plugin config sshfs set secrets '{"prod":{"password":"…","passphrase":"…"
 ```sh
 bb sshfs list                 # configs + connection state
 bb sshfs connect prod         # open the SSH connection
+bb sshfs test prod            # verify auth + SFTP + root, then close
 bb sshfs ls prod src          # list (root-relative)
 bb sshfs cat prod src/app.ts  # print a text file
 bb sshfs write prod src/app.ts --content "…"   # overwrite a file

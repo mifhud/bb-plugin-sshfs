@@ -74,12 +74,43 @@ class MemorySftp {
     cb(null, Buffer.from(file.data));
   }
 
-  open(path: string, mode: number, cb: (err: Error | null, handle?: Buffer) => void): void {
+  open(
+    path: string,
+    flags: string | number,
+    attrs: { mode?: number } | ((err: Error | null, handle?: Buffer) => void),
+    maybeCb?: (err: Error | null, handle?: Buffer) => void,
+  ): void {
+    let cb = maybeCb;
+    let mode = 0o644;
+    if (typeof attrs === "function") {
+      cb = attrs;
+    } else if (attrs !== null && typeof attrs === "object") {
+      mode = attrs.mode ?? 0o644;
+    }
+    const callback = cb ?? (() => undefined);
+    // Model real flag parsing: ssh2 forwards NUMBERS as raw SSH_FXF bits, so
+    // a mode like 0644 (420) has no WRITE|TRUNC bit set and real servers
+    // reject it (or open read-only). String flags are the correct API.
+    const WRITE = 2;
+    const TRUNC = 16;
+    const writable =
+      (typeof flags === "string" && (flags === "w" || flags === "r+")) ||
+      (typeof flags === "number" && (flags & (WRITE | TRUNC)) !== 0);
+    if (typeof flags === "string" && flags !== "r" && !writable) {
+      callback(new Error(`unsupported flags: ${flags}`));
+      return;
+    }
+    if (!writable && typeof flags === "number") {
+      callback(Object.assign(new Error("EINVAL"), { code: 4 }));
+      return;
+    }
+    // An existing file keeps its mode; a brand-new file takes the requested mode.
+    if (!this.files.has(path)) {
+      this.files.set(path, { data: Buffer.alloc(0), mode: 0o100000 | (mode & 0o777), mtime: 0 });
+    }
     const id = this.nextHandle++;
     this.handles.set(id, path);
-    // Existing file keeps its mode; a brand-new file takes the requested mode.
-    if (!this.files.has(path)) this.files.set(path, { data: Buffer.alloc(0), mode: 0o100000 | mode, mtime: 0 });
-    cb(null, Buffer.from(String(id)));
+    callback(null, Buffer.from(String(id)));
   }
 
   write(
@@ -291,6 +322,19 @@ describe("realSession", () => {
     expect(result.size).toBe(11);
     expect(sftp.files.get("/doc.txt")?.data.toString()).toBe("new content");
     expect(sftp.files.get("/doc.txt")?.mode).toBe(0o100600);
+  });
+
+  it("overwrites plain 0644 files with real write flags (regression)", async () => {
+    // The flags arg must be the string "w" + attrs mode, never the numeric
+    // mode: ssh2 forwards numbers as SSH_FXF bits, so 0644 (420) opens fail
+    // on real servers with "not found" / empty files.
+    const sftp = new MemorySftp();
+    sftp.seed("/config.xml", "old data", 0o100644);
+    const session = realSession(sftp as never, { exec: () => undefined } as never);
+    const result = await session.writeFile("/config.xml", Buffer.from("<new/>"));
+    expect(result.size).toBe(6);
+    expect(sftp.files.get("/config.xml")?.data.toString()).toBe("<new/>");
+    expect(sftp.files.get("/config.xml")?.mode).toBe(0o100644);
   });
 
   it("creates new files with a default mode", async () => {

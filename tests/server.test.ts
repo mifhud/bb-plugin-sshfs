@@ -115,6 +115,13 @@ describe("RPC", () => {
     );
   });
 
+  it("tests unknown mounts with a clear error", async () => {
+    const { harness } = await setup();
+    await expect(harness.behavior.callRpc("mounts_test", { name: "ghost" })).rejects.toThrow(
+      /No SSH FS config named "ghost"/,
+    );
+  });
+
   it("refuses traversal in paths before any connection is attempted", async () => {
     const { harness } = await setup({ configs: JSON.stringify([makeConfig()]) });
     await expect(
@@ -136,6 +143,7 @@ describe("RPC", () => {
         "secrets_set",
         "mounts_connect",
         "mounts_disconnect",
+        "mounts_test",
         "fs_list",
         "fs_read",
         "fs_write",

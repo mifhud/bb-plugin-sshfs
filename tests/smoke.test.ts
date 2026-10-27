@@ -247,7 +247,9 @@ describe("end-to-end over a real SSH transport", () => {
   it("connects, browses, opens, edits, and saves files", async () => {
     const server = await startServer();
     current = server;
-    writeFileSync(join(server.home, "hello.txt"), "hello from the smoke test\n");
+    // Explicit 0644: with the old write-path bug (numeric mode passed as
+    // OPEN flags) this file could not be overwritten on any server.
+    writeFileSync(join(server.home, "hello.txt"), "hello from the smoke test\n", { mode: 0o644 });
 
     const manager = new SftpManager({ idleTimeoutMs: 0 });
     const config = { name: "smoke", host: "127.0.0.1", user: USER, port: server.port, root: "/" };

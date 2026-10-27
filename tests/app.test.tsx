@@ -41,6 +41,7 @@ describe("SSH FS page", () => {
             return { connected: true, root: "/srv/app", user: "deploy", host: "example.com", port: 22 };
           },
           mounts_disconnect: neverCalled,
+          mounts_test: neverCalled,
           fs_list: neverCalled,
           fs_read: neverCalled,
           fs_write: neverCalled,
@@ -59,6 +60,47 @@ describe("SSH FS page", () => {
     slot.lifecycle.unmount();
   });
 
+  it("switches between connected servers with tabs", async () => {
+    const listedMounts: string[] = [];
+    const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
+      app.navPanels[0]!,
+      { subPath: "" },
+      {
+        experimental_rpcContract: rpcContract,
+        rpc: {
+          configs_list: () => ({
+            configs: [
+              { ...PROD_VIEW, connected: true },
+              { ...PROD_VIEW, name: "stage", host: "stage.example.com", connected: true },
+            ],
+          }),
+          configs_save: neverCalled,
+          secrets_set: neverCalled,
+          mounts_connect: neverCalled,
+          mounts_disconnect: neverCalled,
+          mounts_test: neverCalled,
+          fs_list: ({ mount }: { mount: string }) => {
+            listedMounts.push(mount);
+            return { path: ".", entries: [], truncated: false };
+          },
+          fs_read: neverCalled,
+          fs_write: neverCalled,
+          fs_mkdir: neverCalled,
+          fs_delete: neverCalled,
+          fs_rename: neverCalled,
+        },
+      },
+    );
+
+    // Auto-selects the first connected mount and lists its root.
+    await waitFor(() => expect(listedMounts).toEqual(["prod"]));
+
+    // The second server's tab switches the browser to it.
+    fireEvent.click(screen.getByRole("tab", { name: /stage/ }));
+    await waitFor(() => expect(listedMounts).toEqual(["prod", "stage"]));
+    slot.lifecycle.unmount();
+  });
+
   it("shows a hint when no configs exist", async () => {
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
       app.navPanels[0]!,
@@ -71,6 +113,7 @@ describe("SSH FS page", () => {
           secrets_set: neverCalled,
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
+          mounts_test: neverCalled,
           fs_list: neverCalled,
           fs_read: neverCalled,
           fs_write: neverCalled,
@@ -102,6 +145,7 @@ describe("Remote file editor", () => {
           secrets_set: neverCalled,
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
+          mounts_test: neverCalled,
           fs_list: neverCalled,
           fs_read: () => ({
             path: "README.md",
@@ -147,6 +191,7 @@ describe("Remote file editor", () => {
           secrets_set: neverCalled,
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
+          mounts_test: neverCalled,
           fs_list: neverCalled,
           fs_read: () => ({
             path: "logo.png",

@@ -192,7 +192,14 @@ export function realSession(sftp: SFTPWrapper, client: Client): SftpSession {
       const mode = existing ? existing.mode & 0o777 : 0o644;
       let handle: Buffer;
       try {
-        handle = await call<Buffer>((callback) => sftp.open(absPath, mode, callback));
+        // Flags must be the string "w", not the numeric mode: ssh2 treats a
+        // number as raw SSH_FXF bits, so mode 0644 (420) reaches real servers
+        // as READ|WRITE|CREAT|TRUNC all unset — opens fail with "not found"
+        // or leave files truncated/empty. Attr mode keeps the original
+        // permissions on overwrite.
+        handle = await call<Buffer>((callback) =>
+          sftp.open(absPath, "w", { mode }, callback),
+        );
       } catch (error) {
         throw friendlySftpError(`write ${absPath}`, error);
       }
