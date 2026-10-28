@@ -248,36 +248,38 @@ export function RemoteBrowser({
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* Breadcrumb + tools */}
-      <div className="flex items-center gap-1 border-b border-border px-3 py-2">
-        <Button
-          variant="ghost"
-          size="sm"
-          className={cn("h-7 px-1.5 text-xs", cwd === "" && "text-foreground")}
-          onClick={() => navigate("")}
-          aria-label="Mount root"
-        >
-          <Icon name="Globe" className="mr-1 size-3.5" />
-          {mount}
-        </Button>
-        {crumbs.map((segment, index) => {
-          const path = crumbs.slice(0, index + 1).join("/");
-          const last = index === crumbs.length - 1;
-          return (
-            <span key={path} className="flex min-w-0 items-center gap-1">
-              <span className="text-muted-foreground">/</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className={cn("h-7 px-1.5 text-xs", last && "text-foreground")}
-                onClick={() => navigate(path)}
-              >
-                <span className="max-w-32 truncate">{segment}</span>
-              </Button>
-            </span>
-          );
-        })}
-        <span className="ml-auto flex items-center gap-1">
+      {/* Path dir — full-width row, then tools on their own row */}
+      <div className="border-b border-border">
+        <div className="flex items-center gap-1 px-3 py-1.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("h-7 px-1.5 text-xs", cwd === "" && "text-foreground")}
+            onClick={() => navigate("")}
+            aria-label="Mount root"
+          >
+            <Icon name="Terminal" className="mr-1 size-3.5" />
+            {mount}
+          </Button>
+          {crumbs.map((segment, index) => {
+            const path = crumbs.slice(0, index + 1).join("/");
+            const last = index === crumbs.length - 1;
+            return (
+              <span key={path} className="flex min-w-0 items-center gap-1">
+                <span className="text-muted-foreground">/</span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className={cn("h-7 px-1.5 text-xs", last && "text-foreground")}
+                  onClick={() => navigate(path)}
+                >
+                  <span className="max-w-32 truncate">{segment}</span>
+                </Button>
+              </span>
+            );
+          })}
+        </div>
+        <div className="flex items-center justify-end gap-1 border-t border-border px-3 py-1.5">
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setDialog({ kind: "file" })}>
             <Icon name="Plus" className="mr-1 size-3.5" />
             New file
@@ -289,7 +291,7 @@ export function RemoteBrowser({
           <Button variant="ghost" size="icon" className="size-7" aria-label="Refresh" onClick={invalidate}>
             <Icon name="ArrowReloadHorizontal" className="size-3.5" />
           </Button>
-        </span>
+        </div>
       </div>
 
       {/* Listing */}

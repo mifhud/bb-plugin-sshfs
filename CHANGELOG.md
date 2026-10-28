@@ -16,7 +16,8 @@
   button (reopened from a `Mounts` button in the browser area) and drag its
   edge to resize; panel size/visibility persist across reloads.
 - **Icon fixes**: SSH FS uses the built-in `Terminal` icon everywhere (nav
-  panel and plugin settings/branding); the mounts show/hide button uses
+  panel, plugin settings/branding, the browser's mount-root breadcrumb
+  button, and the empty state); the mounts show/hide button uses
   `PanelLeft`, the connection-test button uses `Plug02`, and the editor saves
   with a real floppy-disk **Save** icon (registered by the plugin) with
   Reload as an icon button — all names now resolve in the BB host icon set

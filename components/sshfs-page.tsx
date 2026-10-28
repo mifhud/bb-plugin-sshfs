@@ -284,7 +284,7 @@ export function SshFsPage({ subPath }: { subPath: string }) {
             <p className="px-2 py-4 text-center text-sm text-muted-foreground">Loading configs…</p>
           ) : configs.length === 0 ? (
             <div className="space-y-3 px-2 py-6 text-center">
-              <Icon name="Globe" className="mx-auto size-6 text-muted-foreground" />
+              <Icon name="Terminal" className="mx-auto size-6 text-muted-foreground" />
               <p className="text-sm text-muted-foreground">
                 No SSH FS configs yet. Add one to mount a remote directory.
               </p>
