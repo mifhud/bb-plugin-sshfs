@@ -1,7 +1,7 @@
 // SSH FS page: mount list on the left (add/edit/delete/connect), remote file
 // browser on the right. Configuration is stored in the plugin's `configs`
 // setting (JSON); secrets stay server-side.
-import { useCallback, useEffect, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "../server";
@@ -12,6 +12,16 @@ import { cn } from "@/lib/utils";
 import { RemoteBrowser } from "./remote-browser";
 import { ConfigDialog, type PasswordAction } from "./config-dialog";
 import { ConfirmDialog } from "./confirm-dialog";
+import {
+  expireStaleSessions,
+  getLastSelectedMount,
+  getMountCwd,
+  getMountSession,
+  markMountConnected,
+  markMountDisconnected,
+  setLastSelectedMount,
+  setMountCwd,
+} from "./session-store";
 import { errorMessage } from "./utils";
 
 const SSHF_CHANGED = "sshfs-changed";
@@ -44,9 +54,18 @@ export function SshFsPage({ subPath }: { subPath: string }) {
   const [testingName, setTestingName] = useState<string | null>(null);
   const [configDialog, setConfigDialog] = useState<{ mode: "add" } | { mode: "edit"; config: ConfigView } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<ConfigView | null>(null);
-  const [browserKey, setBrowserKey] = useState(0);
   const [panelOpen, setPanelOpen] = useState(() => loadBoolean("panelOpen", true));
   const [panelWidth, setPanelWidth] = useState(() => loadNumber("panelWidth", 288));
+  const [rememberSeconds, setRememberSeconds] = useState(600);
+  const autoReconnectAttempts = useRef(new Set<string>());
+
+  // Session policy: how long a mount's connection is remembered for restore.
+  useEffect(() => {
+    rpc
+      .call("settings_get", null)
+      .then((result) => setRememberSeconds(result.sessionRememberSeconds))
+      .catch(() => undefined);
+  }, [rpc]);
 
   // Remember panel size/visibility across reloads (best-effort).
   useEffect(() => {
@@ -71,13 +90,53 @@ export function SshFsPage({ subPath }: { subPath: string }) {
     }
   }, [configs, selected]);
 
-  // Auto-select the first connected mount so an open tab is always useful.
+  // Restore the last-visited mount when it is still connected (or fall back
+  // to the first connected one). Never park on a disconnected mount: after
+  // disconnecting everything, returning shows the neutral hint, not a
+  // connection prompt.
   useEffect(() => {
-    if (selected === null && configs !== null) {
-      const firstConnected = configs.find((config) => config.connected);
-      if (firstConnected !== undefined) setSelected(firstConnected.name);
+    if (selected !== null || configs === null) return;
+    const remembered = getLastSelectedMount();
+    const connected = configs.filter((config) => config.connected);
+    const target =
+      remembered !== null && connected.some((config) => config.name === remembered)
+        ? remembered
+        : connected[0]?.name ?? null;
+    if (target !== null) {
+      setSelected(target);
+      setLastSelectedMount(target);
     }
   }, [selected, configs]);
+
+  // Session memory expires: once a disconnected mount's window has elapsed,
+  // forget its directory so reconnecting lands on the mount root again
+  // instead of a stale directory. Runs before the reconnect effect so a
+  // mount pruned here is never silently reconnected.
+  useEffect(() => {
+    if (configs === null) return;
+    expireStaleSessions(configs, rememberSeconds);
+  }, [configs, rememberSeconds]);
+
+  // Auto-reconnect mounts that were connected recently (session not ended)
+  // but idle-closed while the page was away: restore the session silently.
+  useEffect(() => {
+    if (configs === null || rememberSeconds <= 0) return;
+    const cutoff = Date.now() - rememberSeconds * 1000;
+    for (const config of configs) {
+      if (config.connected || autoReconnectAttempts.current.has(config.name)) continue;
+      const session = getMountSession(config.name);
+      if (session === undefined || session.lastConnectedAt === null) continue;
+      if (session.lastConnectedAt < cutoff) continue;
+      autoReconnectAttempts.current.add(config.name);
+      void rpc
+        .call("mounts_connect", { name: config.name })
+        .then(() => {
+          markMountConnected(config.name);
+          void reload();
+        })
+        .catch(() => undefined);
+    }
+  }, [configs, rememberSeconds, rpc, reload]);
 
   const selectedConfig = configs?.find((config) => config.name === selected) ?? null;
   const connectedTabs = configs === null ? [] : configs.filter((config) => config.connected);
@@ -110,12 +169,18 @@ export function SshFsPage({ subPath }: { subPath: string }) {
     }
   };
 
+  const select = (name: string) => {
+    setSelected(name);
+    setLastSelectedMount(name);
+  };
+
   const connect = async (name: string) => {
     setBusyName(name);
     try {
       await rpc.call("mounts_connect", { name });
+      markMountConnected(name);
+      select(name);
       toast.success(`Connected ${name}`);
-      setSelected(name);
       await reload();
     } catch (cause) {
       toast.error(errorMessage(cause));
@@ -128,6 +193,8 @@ export function SshFsPage({ subPath }: { subPath: string }) {
     setBusyName(name);
     try {
       await rpc.call("mounts_disconnect", { name });
+      markMountDisconnected(name);
+      toast.success(`Disconnected ${name}`);
       await reload();
     } catch (cause) {
       toast.error(errorMessage(cause));
@@ -154,7 +221,7 @@ export function SshFsPage({ subPath }: { subPath: string }) {
     }
     toast.success(exists ? `Saved ${config.name}` : `Added ${config.name}`);
     setConfigDialog(null);
-    setSelected(config.name);
+    select(config.name);
     await reload();
     if (result.configs.some((view) => view.name === config.name)) {
       await connect(config.name);
@@ -241,7 +308,7 @@ export function SshFsPage({ subPath }: { subPath: string }) {
                     <button
                       type="button"
                       className="flex w-full items-center gap-2 text-left"
-                      onClick={() => setSelected(config.name)}
+                      onClick={() => select(config.name)}
                     >
                       <span
                         className={cn(
@@ -367,7 +434,7 @@ export function SshFsPage({ subPath }: { subPath: string }) {
                   type="button"
                   role="tab"
                   aria-selected={active}
-                  onClick={() => setSelected(config.name)}
+                  onClick={() => select(config.name)}
                   title={`${config.host} :${config.root}`}
                   className={cn(
                     "flex h-8 shrink-0 items-center gap-2 rounded-t-md border border-b-0 px-3 text-xs",
@@ -384,26 +451,27 @@ export function SshFsPage({ subPath }: { subPath: string }) {
           </div>
         ) : null}
         <div className="min-h-0 flex-1">
-          {selectedConfig === null ? (
+          {selectedConfig === null || !selectedConfig.connected ? (
             <div className="flex h-full items-center justify-center p-6">
               <div className="w-full max-w-sm space-y-2 rounded-lg border border-dashed border-border p-6 text-center">
                 <Icon name="FolderOpen" className="mx-auto size-6 text-muted-foreground" />
                 <p className="text-sm text-muted-foreground">
-                  Pick a mount on the left to browse its files
-                  {subPath === "" ? "" : ` (subPath: ${subPath})`}.
+                  {selectedConfig === null
+                    ? `Pick a mount on the left to browse its files${
+                        subPath === "" ? "" : ` (subPath: ${subPath})`
+                      }.`
+                    : `${selectedConfig.name} is not connected. Connect it from the mounts list to browse its files.`}
                 </p>
               </div>
             </div>
           ) : (
             <RemoteBrowser
-              // Remount on connect/disconnect so the tree starts fresh.
-              key={`${selectedConfig.name}:${selectedConfig.connected}:${browserKey}`}
+              // Remount on connect/disconnect so the tree starts fresh from
+              // the remembered directory.
+              key={`${selectedConfig.name}:${selectedConfig.connected}`}
               config={selectedConfig}
-              onStateChange={(connected) => {
-                setBrowserKey((value) => value + 1);
-                void reload();
-                if (!connected) toast.success(`Disconnected ${selectedConfig.name}`);
-              }}
+              initialPath={getMountCwd(selectedConfig.name)}
+              onCwdChange={(cwd) => setMountCwd(selectedConfig.name, cwd)}
             />
           )}
         </div>

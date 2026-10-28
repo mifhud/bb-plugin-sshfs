@@ -21,6 +21,16 @@
   with a real floppy-disk **Save** icon (registered by the plugin) with
   Reload as an icon button — all names now resolve in the BB host icon set
   instead of falling back to the default `Zap`.
+- **Mount session memory**: the page remembers each mount's last directory
+  and restores it when you return or switch tabs; mounts that were connected
+  recently are auto-reconnected silently on return (no forced manual
+  connect) as long as the session hasn't ended. Once a disconnected mount's
+  window has elapsed, its remembered directory is forgotten so the next
+  connect lands on the mount root again. Window configurable via the
+  `sessionRememberSeconds` setting (default 600 s, 0 = off); manual
+  disconnects always end the session but keep the directory, and after
+  disconnecting everything the page returns to the neutral hint — it never
+  parks the browser on a disconnected mount with a connect prompt.
 
 ## 0.1.0 — 2026-10-27
 

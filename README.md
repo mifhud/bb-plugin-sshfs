@@ -75,6 +75,15 @@ bb sshfs disconnect prod
   invalid UTF-8); writes at 2 MiB of text.
 - Connections idle-close after `idleTimeoutSeconds` (default 60 s; 0 keeps
   them open) and reconnect on the next operation.
+- The page remembers each mount's session: the last directory browsed is
+  restored when you come back or switch tabs, and a mount that was connected
+  recently is auto-reconnected silently on return instead of forcing a manual
+  connect. How long a session is remembered is `sessionRememberSeconds`
+  (default 600 s; 0 = never auto-reconnect). Once a disconnected mount's
+  window has elapsed, its remembered directory is forgotten, so the next
+  connect lands on the mount root again. Manual disconnects always end the
+  session but keep the remembered directory; returning after disconnecting
+  everything shows the neutral hint, never a connection prompt.
 - `~` roots need a POSIX remote shell (`$HOME` via `exec`); plain absolute
   roots never do.
 - vscode-sshfs extras (PuTTY sessions, hop/proxy, SFTP-sudo, remote terminals,

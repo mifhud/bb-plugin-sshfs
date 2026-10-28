@@ -82,6 +82,19 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       experimental_schema: z.number().int().min(0).max(3600),
       default: 60,
     },
+    sessionRememberSeconds: {
+      type: "number",
+      label: "Remember mount sessions (seconds, 0 = off)",
+      description:
+        "The SSH FS page remembers where each mount was and auto-reconnects " +
+        "mounts that were connected recently (idle-closed) when you return, " +
+        "restoring the last directory. Once a disconnected mount's window " +
+        "has elapsed its remembered directory is forgotten, so the next " +
+        "connect lands on the mount root. Manual disconnects always end the " +
+        "session. 0 disables auto-reconnect.",
+      experimental_schema: z.number().int().min(0).max(86400),
+      default: 600,
+    },
   });
 
   const manager = new SftpManager({
@@ -220,6 +233,10 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
       else next[name] = entry;
       await settings.experimental_set({ secrets: JSON.stringify(next) });
       return { hasPassword: entry.password !== undefined };
+    },
+    settings_get: async () => {
+      const values = await settings.get();
+      return { sessionRememberSeconds: values.sessionRememberSeconds ?? 600 };
     },
     mounts_connect: async ({ name }) => {
       const info = await connectMount(name);

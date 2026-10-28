@@ -91,21 +91,25 @@ type BrowserDialog =
 
 export function RemoteBrowser({
   config,
-  onStateChange,
+  initialPath = "",
+  onCwdChange,
 }: {
-  /** Must be connected to browse. */
+  /** Must be connected to browse (the page only mounts it when connected). */
   config: ConfigView;
-  onStateChange: (connected: boolean, mount: string) => void;
+  /** Directory to land on at mount (restored from the session store). */
+  initialPath?: string;
+  onCwdChange?: (cwd: string) => void;
 }) {
   const rpc = useRpc<typeof rpcContract>();
   const panel = experimental_useAppPanel();
 
-  const [cwd, setCwd] = useState("");
+  const [cwd, setCwd] = useState(initialPath ?? "");
   const [entries, setEntries] = useState<FsEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
-  const cache = useRef(new Map<string, FsEntry[]>());
+  const cache = useRef(new Map<string, { entries: FsEntry[]; truncated: boolean }>());
+  const firstCwdLoad = useRef(true);
 
   const [dialog, setDialog] = useState<BrowserDialog | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
@@ -117,14 +121,24 @@ export function RemoteBrowser({
     dialog !== null && dialog.kind === "rename" ? dialog.entry : null;
   const mount = config.name;
 
+  const navigate = (path: string) => {
+    setCwd(path);
+    onCwdChange?.(path);
+  };
+
   const load = useCallback(
     async (path: string, force = false) => {
-      if (!force && cache.current.has(path)) return;
+      const cached = cache.current.get(path);
+      if (cached !== undefined && !force) {
+        setEntries(cached.entries);
+        setTruncated(cached.truncated);
+        return;
+      }
       setLoading(true);
       setError(null);
       try {
         const result = await rpc.call("fs_list", { mount, path: path === "" ? "." : path });
-        cache.current.set(path, result.entries);
+        cache.current.set(path, { entries: result.entries, truncated: result.truncated });
         setEntries(result.entries);
         setTruncated(result.truncated);
       } catch (cause) {
@@ -138,15 +152,19 @@ export function RemoteBrowser({
     [rpc, mount],
   );
 
-  // Fresh state per mount: reset navigation, cache, and load the root.
+  // Fresh state per mount: reset the cache and load the (restored) directory.
   useEffect(() => {
-    setCwd("");
     cache.current = new Map();
-    void load("");
+    void load(cwd);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-scoped: cwd is the initialPath at mount
   }, [mount, load]);
 
+  // Navigate on breadcrumb/dir clicks; the mount initial load happens above.
   useEffect(() => {
-    if (cwd === "") return; // root got loaded on mount switch
+    if (firstCwdLoad.current) {
+      firstCwdLoad.current = false;
+      return;
+    }
     void load(cwd);
   }, [cwd, load]);
 
@@ -162,19 +180,6 @@ export function RemoteBrowser({
       params: { mount, path: joinRel(cwd, entry.name) },
       title: entry.name,
     });
-  };
-
-  const connect = async () => {
-    setBusy(true);
-    try {
-      await rpc.call("mounts_connect", { name: mount });
-      toast.success(`Connected ${mount}`);
-      onStateChange(true, mount);
-    } catch (cause) {
-      toast.error(errorMessage(cause));
-    } finally {
-      setBusy(false);
-    }
   };
 
   const createEntry = async (value: string, kind: "file" | "folder") => {
@@ -236,19 +241,7 @@ export function RemoteBrowser({
   };
 
   if (!config.connected) {
-    return (
-      <div className="flex h-full items-center justify-center p-6">
-        <div className="w-full max-w-sm space-y-3 rounded-lg border border-dashed border-border p-6 text-center">
-          <Icon name="Globe" className="mx-auto size-6 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            {mount} is not connected. Connect to browse its files.
-          </p>
-          <Button onClick={() => void connect()} disabled={busy}>
-            Connect {mount}
-          </Button>
-        </div>
-      </div>
-    );
+    return null; // the page renders the pick-a-mount hint instead
   }
 
   const crumbs = segmentsRel(cwd);
@@ -261,7 +254,7 @@ export function RemoteBrowser({
           variant="ghost"
           size="sm"
           className={cn("h-7 px-1.5 text-xs", cwd === "" && "text-foreground")}
-          onClick={() => setCwd("")}
+          onClick={() => navigate("")}
           aria-label="Mount root"
         >
           <Icon name="Globe" className="mr-1 size-3.5" />
@@ -277,7 +270,7 @@ export function RemoteBrowser({
                 variant="ghost"
                 size="sm"
                 className={cn("h-7 px-1.5 text-xs", last && "text-foreground")}
-                onClick={() => setCwd(path)}
+                onClick={() => navigate(path)}
               >
                 <span className="max-w-32 truncate">{segment}</span>
               </Button>
@@ -325,7 +318,7 @@ export function RemoteBrowser({
                       type="button"
                       className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
                       onClick={() => {
-                        if (isDir) setCwd(joinRel(cwd, entry.name));
+                        if (isDir) navigate(joinRel(cwd, entry.name));
                         else openFile(entry);
                       }}
                       title={isDir ? `Open ${entry.name}` : `Edit ${entry.name}`}

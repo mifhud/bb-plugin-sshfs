@@ -1,13 +1,24 @@
 // @vitest-environment jsdom
 // Frontend behavior: the SSH FS page lists configs and connects, and the
 // remote file editor loads, edits, and saves over RPC.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { rpcContract } from "../contract";
+import type { FsEntry } from "../contract";
 import { RemoteFileEditor } from "../components/file-editor";
+import { resetSessionStore } from "../components/session-store";
 
 const app = await loadPluginApp(() => import("../app"));
+
+// The session store is module-level (it survives navigation by design);
+// reset it so tests don't leak remembered dirs/connections into each other.
+beforeEach(() => {
+  resetSessionStore();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 // Handlers the tested surface never calls; renderSlot's rpc map is complete,
 // so stubs keep the typed map satisfied and fail loudly if actually reached.
@@ -27,22 +38,25 @@ const PROD_VIEW = {
 describe("SSH FS page", () => {
   it("lists mounted configs and connects", async () => {
     const connectCalls: string[] = [];
+    let connected = false;
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
       app.navPanels[0]!,
       { subPath: "" },
       {
         experimental_rpcContract: rpcContract,
         rpc: {
-          configs_list: () => ({ configs: [PROD_VIEW] }),
+          configs_list: () => ({ configs: [{ ...PROD_VIEW, connected }] }),
           configs_save: neverCalled,
           secrets_set: neverCalled,
+          settings_get: () => ({ sessionRememberSeconds: 600 }),
           mounts_connect: ({ name }: { name: string }) => {
             connectCalls.push(name);
+            connected = true;
             return { connected: true, root: "/srv/app", user: "deploy", host: "example.com", port: 22 };
           },
           mounts_disconnect: neverCalled,
           mounts_test: neverCalled,
-          fs_list: neverCalled,
+          fs_list: () => ({ path: ".", entries: [], truncated: false }),
           fs_read: neverCalled,
           fs_write: neverCalled,
           fs_mkdir: neverCalled,
@@ -76,6 +90,7 @@ describe("SSH FS page", () => {
           }),
           configs_save: neverCalled,
           secrets_set: neverCalled,
+          settings_get: () => ({ sessionRememberSeconds: 600 }),
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
           mounts_test: neverCalled,
@@ -101,6 +116,217 @@ describe("SSH FS page", () => {
     slot.lifecycle.unmount();
   });
 
+  it("restores the last directory when the page remounts", async () => {
+    const listedPaths: string[] = [];
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected: true }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: ({ path }: { path: string }) => {
+        listedPaths.push(path);
+        return {
+          path,
+          entries: (
+            path === "."
+              ? [{ name: "apps", kind: "dir", size: 0, mtimeMs: 1, mode: 0o040755 }]
+              : [{ name: "main.ts", kind: "file", size: 5, mtimeMs: 1, mode: 0o100644 }]
+          ) as FsEntry[],
+          truncated: false,
+        };
+      },
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: neverCalled,
+    };
+
+    const first = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await first.findByText("apps");
+    fireEvent.click(screen.getByRole("button", { name: /apps/ }));
+    await first.findByText("main.ts");
+    first.lifecycle.unmount(); // "navigate away"
+
+    // A fresh page mount restores the directory, not the root.
+    const second = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await second.findByText("main.ts");
+    expect(listedPaths).toContain("apps");
+    second.lifecycle.unmount();
+  });
+
+  it("auto-reconnects a mount whose session is still fresh", async () => {
+    const connectCalls: string[] = [];
+    let connected = false;
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: ({ name }: { name: string }) => {
+        connectCalls.push(name);
+        connected = true;
+        return { connected: true, root: "/srv/app", user: "deploy", host: "example.com", port: 22 };
+      },
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: () => ({ path: ".", entries: [], truncated: false }),
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: neverCalled,
+    };
+
+    // Session: user connects, then the page is left (unmount).
+    const first = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await first.findByText("prod");
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(connectCalls).toEqual(["prod"]));
+    first.lifecycle.unmount();
+
+    // While away the server idle-closed the connection (connected=false).
+    // Returning restores the session automatically — no manual connect.
+    connected = false;
+    const second = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await waitFor(() => expect(connectCalls).toEqual(["prod", "prod"]));
+    second.lifecycle.unmount();
+  });
+
+  it("manual disconnect ends the session: no auto-reconnect on return", async () => {
+    const connectCalls: string[] = [];
+    let connected = false;
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: ({ name }: { name: string }) => {
+        connectCalls.push(name);
+        connected = true;
+        return { connected: true, root: "/srv/app", user: "deploy", host: "example.com", port: 22 };
+      },
+      mounts_disconnect: () => {
+        connected = false;
+        return { disconnected: true };
+      },
+      mounts_test: neverCalled,
+      fs_list: () => ({ path: ".", entries: [], truncated: false }),
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: neverCalled,
+    };
+
+    const first = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await first.findByText("prod");
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await waitFor(() => expect(connectCalls).toEqual(["prod"]));
+    await first.findByRole("button", { name: "Disconnect" });
+    fireEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    // After the manual disconnect the browser area shows the neutral hint,
+    // not a connect prompt.
+    await first.findByText(/is not connected\. Connect it from the mounts list/);
+    first.lifecycle.unmount();
+
+    // Returning reconnects nothing: the session ended when the user
+    // disconnected manually, despite the fresh remember window.
+    connected = false;
+    const second = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await second.findByText(/Pick a mount on the left/);
+    const { promise: settle, resolve: done } = Promise.withResolvers<void>();
+    setTimeout(done, 50);
+    await settle;
+    expect(connectCalls).toEqual(["prod"]);
+    second.lifecycle.unmount();
+  });
+
+  it("forgets the remembered directory once the session window elapsed", async () => {
+    const listedPaths: string[] = [];
+    let connected = false;
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: () => {
+        connected = true;
+        return { connected: true, root: "/srv/app", user: "deploy", host: "example.com", port: 22 };
+      },
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: ({ path }: { path: string }) => {
+        listedPaths.push(path);
+        return {
+          path,
+          entries: (
+            path === "."
+              ? [{ name: "apps", kind: "dir", size: 0, mtimeMs: 1, mode: 0o040755 }]
+              : []
+          ) as FsEntry[],
+          truncated: false,
+        };
+      },
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: neverCalled,
+    };
+
+    let clock = 1_700_000_000_000;
+    vi.spyOn(Date, "now").mockImplementation(() => clock);
+
+    const first = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await first.findByText("prod");
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await first.findByText("apps");
+    fireEvent.click(screen.getByRole("button", { name: /apps/ }));
+    await waitFor(() => expect(listedPaths).toContain("apps"));
+    first.lifecycle.unmount();
+
+    // Away longer than `sessionRememberSeconds`: idle-closed and expired.
+    connected = false;
+    clock += 601_000;
+    listedPaths.length = 0;
+
+    const second = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await second.findByText(/Pick a mount on the left/);
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    await second.findByText("apps");
+    // Reconnecting lands on the mount root, not the stale directory.
+    expect(listedPaths).toEqual(["."]);
+    second.lifecycle.unmount();
+  });
+
   it("shows a hint when no configs exist", async () => {
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
       app.navPanels[0]!,
@@ -111,6 +337,7 @@ describe("SSH FS page", () => {
           configs_list: () => ({ configs: [] }),
           configs_save: neverCalled,
           secrets_set: neverCalled,
+          settings_get: () => ({ sessionRememberSeconds: 600 }),
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
           mounts_test: neverCalled,
@@ -143,6 +370,7 @@ describe("Remote file editor", () => {
           configs_list: neverCalled,
           configs_save: neverCalled,
           secrets_set: neverCalled,
+          settings_get: neverCalled,
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
           mounts_test: neverCalled,
@@ -189,6 +417,7 @@ describe("Remote file editor", () => {
           configs_list: neverCalled,
           configs_save: neverCalled,
           secrets_set: neverCalled,
+          settings_get: neverCalled,
           mounts_connect: neverCalled,
           mounts_disconnect: neverCalled,
           mounts_test: neverCalled,

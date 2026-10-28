@@ -127,6 +127,11 @@ export const rpcContract = defineRpcContract({
     }),
     output: z.object({ hasPassword: z.boolean() }),
   },
+  /** Frontend session policy: how long a mount session is remembered. */
+  settings_get: {
+    input: z.null(),
+    output: z.object({ sessionRememberSeconds: z.number().int().min(0) }),
+  },
   mounts_connect: {
     input: z.object({ name: mountNameSchema }),
     output: z.object({

@@ -102,6 +102,20 @@ describe("RPC", () => {
     ).rejects.toThrow(/No SSH FS config named "ghost"/);
   });
 
+  it("reports the session-remember duration (default 600s)", async () => {
+    const { harness } = await setup();
+    const result = await callRpc<{ sessionRememberSeconds: number }>(harness, "settings_get", null);
+    expect(result).toEqual({ sessionRememberSeconds: 600 });
+
+    const customized = await setup({ sessionRememberSeconds: 120 });
+    const resultCustom = await callRpc<{ sessionRememberSeconds: number }>(
+      customized.harness,
+      "settings_get",
+      null,
+    );
+    expect(resultCustom).toEqual({ sessionRememberSeconds: 120 });
+  });
+
   it("disconnects unknown mounts harmlessly and validates input", async () => {
     const { harness } = await setup();
     const result = await callRpc<{ disconnected: boolean }>(
@@ -141,6 +155,7 @@ describe("RPC", () => {
         "configs_list",
         "configs_save",
         "secrets_set",
+        "settings_get",
         "mounts_connect",
         "mounts_disconnect",
         "mounts_test",
