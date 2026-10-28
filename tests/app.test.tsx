@@ -150,7 +150,7 @@ describe("SSH FS page", () => {
       rpc: stubs,
     });
     await first.findByText("apps");
-    fireEvent.click(screen.getByRole("button", { name: /apps/ }));
+    fireEvent.click(screen.getByRole("button", { name: "apps" })); // the row, not "Expand apps"
     await first.findByText("main.ts");
     first.lifecycle.unmount(); // "navigate away"
 
@@ -162,6 +162,65 @@ describe("SSH FS page", () => {
     await second.findByText("main.ts");
     expect(listedPaths).toContain("apps");
     second.lifecycle.unmount();
+  });
+
+  it("expands folders in place with the chevron; the row click still navigates", async () => {
+    const listedPaths: string[] = [];
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected: true }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: ({ path }: { path: string }) => {
+        listedPaths.push(path);
+        return {
+          path,
+          entries: (
+            path === "."
+              ? [{ name: "apps", kind: "dir", size: 0, mtimeMs: 1, mode: 0o040755 }]
+              : path === "apps"
+                ? [
+                    { name: "src", kind: "dir", size: 0, mtimeMs: 1, mode: 0o040755 },
+                    { name: "readme.md", kind: "file", size: 3, mtimeMs: 1, mode: 0o100644 },
+                  ]
+                : []
+          ) as FsEntry[],
+          truncated: false,
+        };
+      },
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: neverCalled,
+    };
+
+    const slot = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await slot.findByText("apps");
+
+    // The chevron expands in place: children appear without changing the path.
+    fireEvent.click(screen.getByRole("button", { name: "Expand apps" }));
+    await slot.findByText("readme.md");
+    expect(listedPaths).toEqual([".", "apps"]);
+
+    // Collapse hides them again.
+    fireEvent.click(screen.getByRole("button", { name: "Collapse apps" }));
+    await waitFor(() => expect(screen.queryByText("readme.md")).toBeNull());
+
+    // Clicking a folder row navigates into it — including from a subdirectory
+    // (paths must stay root-relative, not the plain entry name).
+    fireEvent.click(screen.getByRole("button", { name: "apps" }));
+    await slot.findByText("readme.md");
+    fireEvent.click(screen.getByRole("button", { name: "src" }));
+    await slot.findByText("Empty directory");
+    expect(listedPaths).toContain("apps/src");
+    slot.lifecycle.unmount();
   });
 
   it("auto-reconnects a mount whose session is still fresh", async () => {
@@ -306,7 +365,7 @@ describe("SSH FS page", () => {
     await first.findByText("prod");
     fireEvent.click(screen.getByRole("button", { name: "Connect" }));
     await first.findByText("apps");
-    fireEvent.click(screen.getByRole("button", { name: /apps/ }));
+    fireEvent.click(screen.getByRole("button", { name: "apps" }));
     await waitFor(() => expect(listedPaths).toContain("apps"));
     first.lifecycle.unmount();
 

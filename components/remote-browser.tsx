@@ -1,6 +1,6 @@
 // Remote directory browser: breadcrumb navigation, dir listing, and row
 // actions (open, rename, delete) plus new-file/new-folder/refresh tools.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { experimental_useAppPanel, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "../server";
@@ -111,6 +111,13 @@ export function RemoteBrowser({
   const cache = useRef(new Map<string, { entries: FsEntry[]; truncated: boolean }>());
   const firstCwdLoad = useRef(true);
 
+  // In-place folder expansion (chevron) vs. row click (navigate): expanded
+  // dirs are keyed root-relative so they survive breadcrumb navigation.
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [children, setChildren] = useState<Record<string, { entries: FsEntry[] | null; error: string | null }>>({});
+  const childrenCache = useRef(new Map<string, FsEntry[]>());
+  const childrenLoading = useRef(new Set<string>());
+
   const [dialog, setDialog] = useState<BrowserDialog | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
@@ -155,6 +162,10 @@ export function RemoteBrowser({
   // Fresh state per mount: reset the cache and load the (restored) directory.
   useEffect(() => {
     cache.current = new Map();
+    childrenCache.current.clear();
+    childrenLoading.current.clear();
+    setChildren({});
+    setExpanded(new Set());
     void load(cwd);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-scoped: cwd is the initialPath at mount
   }, [mount, load]);
@@ -168,19 +179,52 @@ export function RemoteBrowser({
     void load(cwd);
   }, [cwd, load]);
 
-  const invalidate = useCallback(() => {
-    cache.current.clear();
-    void load(cwd, true);
-  }, [cwd, load]);
-
-  const openFile = (entry: FsEntry) => {
+  const openFile = (path: string, name: string) => {
     panel.experimental_openTab({
       surface: { kind: "current" },
       tab: { id: "editor", context: { kind: "nav-panel", panelId: "sshfs" }, availability: "action" },
-      params: { mount, path: joinRel(cwd, entry.name) },
-      title: entry.name,
+      params: { mount, path },
+      title: name,
     });
   };
+
+  /** Fetch a folder's children once for in-place expansion. */
+  const loadChildren = useCallback(
+    (path: string) => {
+      if (childrenCache.current.has(path) || childrenLoading.current.has(path)) return;
+      setChildren((prev) => ({ ...prev, [path]: { entries: null, error: null } }));
+      childrenLoading.current.add(path);
+      void (async () => {
+        try {
+          const result = await rpc.call("fs_list", { mount, path: path === "" ? "." : path });
+          childrenCache.current.set(path, result.entries);
+          setChildren((prev) => ({ ...prev, [path]: { entries: result.entries, error: null } }));
+        } catch (cause) {
+          setChildren((prev) => ({ ...prev, [path]: { entries: null, error: errorMessage(cause) } }));
+        } finally {
+          childrenLoading.current.delete(path);
+        }
+      })();
+    },
+    [rpc, mount],
+  );
+
+  const toggleExpand = (path: string) => {
+    if (!expanded.has(path)) loadChildren(path);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) next.delete(path);
+      else next.add(path);
+      return next;
+    });
+  };
+
+  const invalidate = useCallback(() => {
+    cache.current.clear();
+    setChildren({});
+    for (const path of expanded) loadChildren(path);
+    void load(cwd, true);
+  }, [cwd, load, expanded, loadChildren]);
 
   const createEntry = async (value: string, kind: "file" | "folder") => {
     setDialogBusy(true);
@@ -246,6 +290,119 @@ export function RemoteBrowser({
 
   const crumbs = segmentsRel(cwd);
 
+  // Recursive row builder: expanded dirs render their children inline under
+  // the row (indented); rename/delete stay on top-level rows only.
+  const listingRows: ReactNode[] = [];
+  const buildRows = (dirEntries: FsEntry[], dirPath: string, depth: number) => {
+    for (const entry of dirEntries) {
+      const path = joinRel(dirPath, entry.name);
+      const isDir = entry.kind === "dir";
+      const isOpen = isDir && expanded.has(path);
+      const child = children[path];
+      listingRows.push(
+        <li
+          key={path}
+          className="group flex items-center gap-2 py-2 pr-3"
+          style={{ paddingLeft: 12 + depth * 16 }}
+        >
+          {isDir ? (
+            <button
+              type="button"
+              className="flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-state-hover"
+              aria-label={isOpen ? `Collapse ${entry.name}` : `Expand ${entry.name}`}
+              onClick={() => toggleExpand(path)}
+            >
+              <Icon
+                name="ChevronRight"
+                className={cn("size-4 transition-transform", isOpen && "rotate-90")}
+              />
+            </button>
+          ) : (
+            <span className="size-6 shrink-0" />
+          )}
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
+            onClick={() => {
+              if (isDir) navigate(path);
+              else openFile(path, entry.name);
+            }}
+            title={isDir ? `Open ${entry.name}` : `Edit ${entry.name}`}
+          >
+            <EntryIcon kind={entry.kind} />
+            <span className="truncate">{entry.name}</span>
+          </button>
+          <span className="hidden w-20 shrink-0 text-right font-mono text-xs text-muted-foreground sm:block">
+            {isDir ? "" : formatBytes(entry.size)}
+          </span>
+          <span className="hidden w-24 shrink-0 text-right text-xs text-muted-foreground md:block">
+            {formatMtime(entry.mtimeMs)}
+          </span>
+          {depth === 0 ? (
+            <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7"
+                aria-label="Rename"
+                onClick={() => {
+                  setDialogError(null);
+                  setDialog({ kind: "rename", entry });
+                }}
+              >
+                <Icon name="EditFile" className="size-3.5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 text-muted-foreground hover:text-destructive"
+                aria-label="Delete"
+                onClick={() => setConfirmDelete(entry)}
+              >
+                <Icon name="Trash2" className="size-3.5" />
+              </Button>
+            </div>
+          ) : null}
+        </li>,
+      );
+      if (!isOpen) continue;
+      if (child === undefined || (child.entries === null && child.error === null)) {
+        listingRows.push(
+          <li
+            key={`${path}:loading`}
+            className="py-2 pr-3 text-xs text-muted-foreground"
+            style={{ paddingLeft: 12 + (depth + 1) * 16 }}
+          >
+            Loading {path}…
+          </li>,
+        );
+      } else if (child.error !== null) {
+        listingRows.push(
+          <li
+            key={`${path}:error`}
+            className="py-2 pr-3 text-xs text-destructive"
+            style={{ paddingLeft: 12 + (depth + 1) * 16 }}
+          >
+            {child.error}
+          </li>,
+        );
+      } else if (child.entries !== null && child.entries.length === 0) {
+        listingRows.push(
+          <li
+            key={`${path}:empty`}
+            className="py-2 pr-3 text-xs text-muted-foreground"
+            style={{ paddingLeft: 12 + (depth + 1) * 16 }}
+          >
+            Empty
+          </li>,
+        );
+      } else if (child.entries !== null) {
+        buildRows(child.entries, path, depth + 1);
+      }
+    }
+  };
+  if (entries !== null) buildRows(entries, cwd, 0);
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       {/* Path dir — full-width row, then tools on their own row */}
@@ -279,7 +436,7 @@ export function RemoteBrowser({
             );
           })}
         </div>
-        <div className="flex items-center justify-end gap-1 border-t border-border px-3 py-1.5">
+        <div className="flex items-center gap-1 border-t border-border px-3 py-1.5">
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setDialog({ kind: "file" })}>
             <Icon name="Plus" className="mr-1 size-3.5" />
             New file
@@ -312,59 +469,7 @@ export function RemoteBrowser({
         ) : (
           <>
             <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
-              {entries?.map((entry) => {
-                const isDir = entry.kind === "dir";
-                return (
-                  <li key={entry.name} className="group flex items-center gap-2 px-3 py-2">
-                    <button
-                      type="button"
-                      className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm"
-                      onClick={() => {
-                        if (isDir) navigate(joinRel(cwd, entry.name));
-                        else openFile(entry);
-                      }}
-                      title={isDir ? `Open ${entry.name}` : `Edit ${entry.name}`}
-                    >
-                      {isDir ? (
-                        <Icon name="ChevronRight" className="size-4 shrink-0 text-muted-foreground" />
-                      ) : (
-                        <span className="w-4 shrink-0" />
-                      )}
-                      <EntryIcon kind={entry.kind} />
-                      <span className="truncate">{entry.name}</span>
-                    </button>
-                    <span className="hidden w-20 shrink-0 text-right font-mono text-xs text-muted-foreground sm:block">
-                      {isDir ? "" : formatBytes(entry.size)}
-                    </span>
-                    <span className="hidden w-24 shrink-0 text-right text-xs text-muted-foreground md:block">
-                      {formatMtime(entry.mtimeMs)}
-                    </span>
-                    <div className="hidden shrink-0 items-center gap-0.5 group-hover:flex">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7"
-                        aria-label="Rename"
-                        onClick={() => {
-                          setDialogError(null);
-                          setDialog({ kind: "rename", entry });
-                        }}
-                      >
-                        <Icon name="EditFile" className="size-3.5" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="size-7 text-muted-foreground hover:text-destructive"
-                        aria-label="Delete"
-                        onClick={() => setConfirmDelete(entry)}
-                      >
-                        <Icon name="Trash2" className="size-3.5" />
-                      </Button>
-                    </div>
-                  </li>
-                );
-              })}
+              {listingRows}
             </ul>
             {truncated ? (
               <p className="mt-2 text-center text-xs text-muted-foreground">

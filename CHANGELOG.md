@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Expandable folders**: the **>** chevron on a dir row expands/collapses
+  its contents in place (nested, cached per mount), while clicking the
+  folder row still navigates into it — peek without leaving the path.
+- **Browser toolbar layout**: the path breadcrumb is its own full-width row
+  with the tools (new file / new folder / refresh) in a separate row below,
+  left-aligned, using the plain header styling.
+- **Icon consistency**: the browser's mount-root button and empty state now
+  use the built-in `Terminal` icon like the nav panel and settings branding.
+
 ## 0.2.0 — 2026-10-27
 
 - **Fix remote writes**: the file mode was passed where ssh2 expects the open
