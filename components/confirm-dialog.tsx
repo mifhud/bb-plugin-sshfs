@@ -15,6 +15,7 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel = "Delete",
+  extraAction,
   onConfirm,
   onClose,
 }: {
@@ -22,6 +23,7 @@ export function ConfirmDialog({
   title: string;
   description?: ReactNode;
   confirmLabel?: string;
+  extraAction?: { label: string; onClick: () => void; disabled?: boolean };
   onConfirm: () => void;
   onClose: () => void;
 }) {
@@ -38,6 +40,11 @@ export function ConfirmDialog({
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
+          {extraAction === undefined ? null : (
+            <Button onClick={extraAction.onClick} disabled={extraAction.disabled}>
+              {extraAction.label}
+            </Button>
+          )}
           <Button
             variant="destructive"
             onClick={() => {

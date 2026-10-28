@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "./confirm-dialog";
+import { clearDirtyDraft, getDirtyDraft } from "./draft-store";
 import { errorMessage, formatBytes, formatMtime, joinRel, segmentsRel } from "./utils";
 
 function EntryIcon({ kind, className }: { kind: FsEntry["kind"]; className?: string }) {
@@ -170,6 +171,11 @@ export function RemoteBrowser({
   const [dialogBusy, setDialogBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<FsEntry | null>(null);
   const [busy, setBusy] = useState(false);
+  const [pendingOpen, setPendingOpen] = useState<{
+    mount: string;
+    path: string;
+    name: string;
+  } | null>(null);
 
   const renameTarget =
     dialog !== null && dialog.kind === "rename" ? dialog.entry : null;
@@ -226,13 +232,38 @@ export function RemoteBrowser({
     void load(cwd);
   }, [cwd, load]);
 
-  const openFile = (path: string, name: string) => {
+  const openTab = (mount: string, path: string, name: string) => {
     panel.experimental_openTab({
       surface: { kind: "current" },
       tab: { id: "editor", context: { kind: "nav-panel", panelId: "sshfs" }, availability: "action" },
       params: { mount, path },
       title: name,
     });
+  };
+
+  const openFile = (path: string, name: string) => {
+    // Reopening a file that still has an unsaved draft asks what to do with
+    // it instead of silently restoring or silently discarding it.
+    if (getDirtyDraft(mount, path) !== undefined) {
+      setPendingOpen({ mount, path, name });
+      return;
+    }
+    openTab(mount, path, name);
+  };
+
+  const keepDraftAndOpen = () => {
+    if (pendingOpen === null) return;
+    const { mount: m, path: p, name: n } = pendingOpen;
+    setPendingOpen(null);
+    openTab(m, p, n);
+  };
+
+  const discardDraftAndOpen = () => {
+    if (pendingOpen === null) return;
+    const { mount: m, path: p, name: n } = pendingOpen;
+    clearDirtyDraft(m, p);
+    setPendingOpen(null);
+    openTab(m, p, n);
   };
 
   /** Fetch a folder's children once for in-place expansion. */
@@ -593,6 +624,23 @@ export function RemoteBrowser({
         error={dialogError}
         onSubmit={(value) => void renameEntry(value)}
         onClose={() => setDialog(null)}
+      />
+      <ConfirmDialog
+        open={pendingOpen !== null}
+        title="Unsaved draft"
+        description={
+          pendingOpen === null ? undefined : (
+            <>
+              <span className="font-mono">{pendingOpen.path}</span> has an
+              unsaved draft. Keep editing the draft, or discard it and reload
+              from the server?
+            </>
+          )
+        }
+        confirmLabel="Discard"
+        extraAction={{ label: "Keep draft", onClick: keepDraftAndOpen }}
+        onConfirm={discardDraftAndOpen}
+        onClose={() => setPendingOpen(null)}
       />
       <ConfirmDialog
         open={confirmDelete !== null}

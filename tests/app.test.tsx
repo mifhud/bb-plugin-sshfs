@@ -7,6 +7,7 @@ import { loadPluginApp, renderSlot } from "@get-bb/plugin-sdk/testing/app";
 import { rpcContract } from "../contract";
 import type { FsEntry } from "../contract";
 import { RemoteFileEditor } from "../components/file-editor";
+import { getDirtyDraft, resetDraftStore, setDirtyDraft } from "../components/draft-store";
 import { resetSessionStore } from "../components/session-store";
 
 const app = await loadPluginApp(() => import("../app"));
@@ -15,6 +16,7 @@ const app = await loadPluginApp(() => import("../app"));
 // reset it so tests don't leak remembered dirs/connections into each other.
 beforeEach(() => {
   resetSessionStore();
+  resetDraftStore();
   window.localStorage.clear();
 });
 afterEach(() => {
@@ -222,6 +224,57 @@ describe("SSH FS page", () => {
     await slot.findByText("Empty directory");
     expect(listedPaths).toContain("apps/src");
     slot.lifecycle.unmount();
+  });
+
+  it("asks what to do with an unsaved draft when reopening the same file", async () => {
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected: true }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: () => ({
+        path: ".",
+        entries: [{ name: "a.txt", kind: "file", size: 1, mtimeMs: 1, mode: 0o100644 }] as FsEntry[],
+        truncated: false,
+      }),
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: neverCalled,
+    };
+
+    // Keep draft: the file opens and the draft stays for the editor to restore.
+    setDirtyDraft({ mount: "prod", path: "a.txt", content: "edited" });
+    const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
+      app.navPanels[0]!,
+      { subPath: "" },
+      { experimental_rpcContract: rpcContract, rpc: stubs },
+    );
+    await slot.findByText("a.txt");
+    fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
+    await slot.findByText(/unsaved draft/);
+    fireEvent.click(screen.getByRole("button", { name: "Keep draft" }));
+    await waitFor(() => expect(slot.inspection.experimental_tabOpenCalls).toHaveLength(1));
+    expect(getDirtyDraft("prod", "a.txt")?.content).toBe("edited");
+    slot.lifecycle.unmount();
+
+    // Discard: the draft is cleared and the file opens fresh.
+    setDirtyDraft({ mount: "prod", path: "a.txt", content: "edited" });
+    const second = renderSlot<{ subPath: string }, typeof rpcContract>(
+      app.navPanels[0]!,
+      { subPath: "" },
+      { experimental_rpcContract: rpcContract, rpc: stubs },
+    );
+    await second.findByText("a.txt");
+    fireEvent.click(screen.getByRole("button", { name: "a.txt" }));
+    await second.findByText(/unsaved draft/);
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+    await waitFor(() => expect(getDirtyDraft("prod", "a.txt")).toBeUndefined());
+    second.lifecycle.unmount();
   });
 
   it("sorts the listing by name and last modified", async () => {
@@ -507,6 +560,53 @@ describe("Remote file editor", () => {
     fireEvent.click(save);
     await waitFor(() => expect(writes).toEqual(["# Hello world\n"]));
     slot.lifecycle.unmount();
+  });
+
+  it("restores an unsaved draft when the tab remounts", async () => {
+    const props = { subPath: "", params: { mount: "prod", path: "README.md" } };
+    const rpc = {
+      configs_list: neverCalled,
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: neverCalled,
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: neverCalled,
+      fs_read: () => ({
+        path: "README.md",
+        content: "# Hello\n",
+        size: 8,
+        mtimeMs: 1_700_000_000_000,
+        isBinary: false,
+      }),
+      fs_write: () => ({ size: 0, mtimeMs: 1_700_000_001_000 }),
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: neverCalled,
+    };
+
+    const first = renderSlot<{ subPath: string; params: unknown }, typeof rpcContract>(
+      { component: RemoteFileEditor },
+      props,
+      { experimental_rpcContract: rpcContract, rpc },
+    );
+    await first.findByText("prod:README.md");
+    const textarea = screen.getByRole("textbox", { name: "Edit README.md" });
+    fireEvent.change(textarea, { target: { value: "# Hello world\n" } });
+    expect(getDirtyDraft("prod", "README.md")?.content).toBe("# Hello world\n");
+    first.lifecycle.unmount(); // "switch away to another tab"
+
+    const second = renderSlot<{ subPath: string; params: unknown }, typeof rpcContract>(
+      { component: RemoteFileEditor },
+      props,
+      { experimental_rpcContract: rpcContract, rpc },
+    );
+    await second.findByText("prod:README.md");
+    const restored = screen.getByRole("textbox", { name: "Edit README.md" }) as HTMLTextAreaElement;
+    expect(restored.value).toBe("# Hello world\n");
+    expect(screen.getByText("● unsaved")).toBeTruthy();
+    second.lifecycle.unmount();
   });
 
   it("marks binary files as uneditable", async () => {

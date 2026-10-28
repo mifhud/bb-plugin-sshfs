@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Unsaved edits survive tab switches**: the editor keeps a draft of every
+  keystroke (frontend-only, per `mount:path`) and restores it when you come
+  back, so switching editor tabs or leaving the panel never discards work
+  silently. Reopening a file that still has an unsaved draft asks **Keep
+  draft / Discard / Cancel** instead of restoring it silently.
 - **Sortable listing**: click the **Name** / **Size** / **Last modified**
   column headers to sort the browser (asc/desc, mtime defaults to
   newest-first); the choice persists across mounts and reloads. Expanded

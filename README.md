@@ -51,8 +51,10 @@ bb plugin config sshfs set secrets '{"prod":{"password":"…","passphrase":"…"
   connection end-to-end: SSH auth, SFTP channel, and root resolution — the
   connection is closed again unless it was already open.
 - The editor loads the file over SFTP, tracks unsaved changes, and saves back
-  with **Save** or Ctrl/Cmd+S. Binary files and files over 4 MiB are refused
-  with a clear message.
+  with **Save** or Ctrl/Cmd+S. Switching tabs or leaving the panel keeps your
+  unsaved edits — they are restored when you return; reopening a file that
+  still has an unsaved draft asks **Keep draft / Discard / Cancel**. Binary
+  files and files over 4 MiB are refused with a clear message.
 - New file / new folder / rename / delete (recursive, confirmed) work from the
   row actions.
 - The CLI covers the same surface headlessly:

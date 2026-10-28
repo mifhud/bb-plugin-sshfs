@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "./confirm-dialog";
+import { clearDirtyDraft, getDirtyDraft, setDirtyDraft } from "./draft-store";
 import { errorMessage, formatBytes, parseMountPath } from "./utils";
 
 export function RemoteFileEditor({
@@ -42,7 +43,15 @@ export function RemoteFileEditor({
     try {
       const result = await rpc.call("fs_read", { mount: target.mount, path: target.path });
       setFile(result);
-      setDraft(result.content);
+      const stored = getDirtyDraft(target.mount, target.path);
+      if (stored !== undefined && stored.content !== result.content) {
+        // A remounted tab keeps its unsaved edit; the fetched copy is the
+        // saved baseline it diffs against.
+        setDraft(stored.content);
+      } else {
+        setDraft(result.content);
+        if (stored !== undefined) clearDirtyDraft(target.mount, target.path);
+      }
       setMtime(result.mtimeMs);
       setState("ready");
     } catch (cause) {
@@ -74,6 +83,15 @@ export function RemoteFileEditor({
 
   const dirty = file !== null && draft !== file.content;
 
+  const onDraftChange = (value: string) => {
+    setDraft(value);
+    if (file !== null && value !== file.content) {
+      setDirtyDraft({ mount: target.mount, path: target.path, content: value });
+    } else if (file !== null) {
+      clearDirtyDraft(target.mount, target.path);
+    }
+  };
+
   const save = async () => {
     if (!dirty || saving || file === null) return;
     setSaving(true);
@@ -85,6 +103,7 @@ export function RemoteFileEditor({
       });
       setFile({ ...file, content: draft, size: new TextEncoder().encode(draft).byteLength });
       setMtime(result.mtimeMs);
+      clearDirtyDraft(target.mount, target.path);
       toast.success("Saved");
     } catch (cause) {
       toast.error(errorMessage(cause));
@@ -185,7 +204,7 @@ export function RemoteFileEditor({
         <textarea
           className="min-h-0 flex-1 resize-none bg-background p-3 font-mono text-sm leading-relaxed text-foreground outline-none"
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => onDraftChange(event.target.value)}
           onKeyDown={onKeyDown}
           spellCheck={false}
           autoCorrect="off"
@@ -199,7 +218,10 @@ export function RemoteFileEditor({
         title="Discard unsaved changes?"
         description={`Your edits to ${target.path} have not been saved. Reloading will discard them.`}
         confirmLabel="Discard"
-        onConfirm={() => void load()}
+        onConfirm={() => {
+          clearDirtyDraft(target.mount, target.path);
+          void load();
+        }}
         onClose={() => setConfirmDiscard(false)}
       />
     </div>
