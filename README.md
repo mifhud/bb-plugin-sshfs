@@ -41,8 +41,10 @@ bb plugin config sshfs set secrets '{"prod":{"password":"…","passphrase":"…"
 - Open **SSH FS** in the sidebar, click **Connect** on a mount, and browse the
   remote tree with breadcrumbs: the **>** chevron expands/collapses a folder
   in place, clicking the folder row navigates into it, and files open in an
-  editor tab. Connected mounts appear as tabs at the top of the browser so you
-  from server to server; the mounts panel (list) can be hidden with the
+  editor tab. Click the **Name** / **Size** / **Last modified** headers to
+  sort the listing. Connected mounts appear as tabs at the top of the browser
+  so you can jump from server to server; the mounts panel (list) can be hidden
+  with the
   panel button, resized by dragging its edge, and reopened from the `Mounts`
   button in the browser area.
 - The plug button on a mount row (or `bb sshfs test <name>`) verifies the

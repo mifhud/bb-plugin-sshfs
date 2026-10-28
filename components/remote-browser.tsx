@@ -103,6 +103,53 @@ export function RemoteBrowser({
   const rpc = useRpc<typeof rpcContract>();
   const panel = experimental_useAppPanel();
 
+  type SortKey = "name" | "size" | "mtimeMs";
+  type SortDir = "asc" | "desc";
+  const sortLabel: Record<SortKey, string> = {
+    name: "Name",
+    size: "Size",
+    mtimeMs: "Last modified",
+  };
+  const [sortKey, setSortKey] = useState<SortKey>(() => {
+    try {
+      const value = window.localStorage.getItem("sshfs:sortKey");
+      if (value === "name" || value === "size" || value === "mtimeMs") return value;
+    } catch {
+      // storage unavailable: keep the default
+    }
+    return "name";
+  });
+  const [sortDir, setSortDir] = useState<SortDir>(() => {
+    try {
+      const value = window.localStorage.getItem("sshfs:sortDir");
+      if (value === "asc" || value === "desc") return value;
+    } catch {
+      // storage unavailable: keep the default
+    }
+    return "asc";
+  });
+  const toggleSort = (key: SortKey) => {
+    if (key === sortKey) {
+      const next = sortDir === "asc" ? "desc" : "asc";
+      setSortDir(next);
+      try {
+        window.localStorage.setItem("sshfs:sortDir", next);
+      } catch {
+        // storage unavailable: sort persists for the session only
+      }
+      return;
+    }
+    const initial: SortDir = key === "mtimeMs" ? "desc" : "asc";
+    setSortKey(key);
+    setSortDir(initial);
+    try {
+      window.localStorage.setItem("sshfs:sortKey", key);
+      window.localStorage.setItem("sshfs:sortDir", initial);
+    } catch {
+      // storage unavailable: sort persists for the session only
+    }
+  };
+
   const [cwd, setCwd] = useState(initialPath ?? "");
   const [entries, setEntries] = useState<FsEntry[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -294,7 +341,17 @@ export function RemoteBrowser({
   // the row (indented); rename/delete stay on top-level rows only.
   const listingRows: ReactNode[] = [];
   const buildRows = (dirEntries: FsEntry[], dirPath: string, depth: number) => {
-    for (const entry of dirEntries) {
+    const factor = sortDir === "asc" ? 1 : -1;
+    const sorted = [...dirEntries].sort((a, b) => {
+      const compare =
+        sortKey === "name"
+          ? a.name.localeCompare(b.name)
+          : sortKey === "size"
+            ? (a.size - b.size) || a.name.localeCompare(b.name)
+            : (a.mtimeMs ?? -1) - (b.mtimeMs ?? -1) || a.name.localeCompare(b.name);
+      return compare * factor;
+    });
+    for (const entry of sorted) {
       const path = joinRel(dirPath, entry.name);
       const isDir = entry.kind === "dir";
       const isOpen = isDir && expanded.has(path);
@@ -469,6 +526,27 @@ export function RemoteBrowser({
         ) : (
           <>
             <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+              <li className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                <span className="size-6 shrink-0" />
+                {(["name", "size", "mtimeMs"] as const).map((key) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={cn(
+                      "font-medium hover:text-foreground",
+                      key === "name" && "flex min-w-0 flex-1 items-center gap-1 text-left",
+                      key === "size" && "hidden w-20 shrink-0 text-right sm:block",
+                      key === "mtimeMs" && "hidden w-24 shrink-0 text-right md:block",
+                      sortKey === key && "text-foreground",
+                    )}
+                    onClick={() => toggleSort(key)}
+                    aria-label={`Sort by ${sortLabel[key].toLowerCase()}`}
+                  >
+                    {sortLabel[key]}
+                    {sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : null}
+                  </button>
+                ))}
+              </li>
               {listingRows}
             </ul>
             {truncated ? (

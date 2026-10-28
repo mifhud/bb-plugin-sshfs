@@ -15,6 +15,7 @@ const app = await loadPluginApp(() => import("../app"));
 // reset it so tests don't leak remembered dirs/connections into each other.
 beforeEach(() => {
   resetSessionStore();
+  window.localStorage.clear();
 });
 afterEach(() => {
   vi.restoreAllMocks();
@@ -220,6 +221,51 @@ describe("SSH FS page", () => {
     fireEvent.click(screen.getByRole("button", { name: "src" }));
     await slot.findByText("Empty directory");
     expect(listedPaths).toContain("apps/src");
+    slot.lifecycle.unmount();
+  });
+
+  it("sorts the listing by name and last modified", async () => {
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected: true }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: () => ({
+        path: ".",
+        entries: [
+          { name: "b.txt", kind: "file", size: 1, mtimeMs: 3, mode: 0o100644 },
+          { name: "a.txt", kind: "file", size: 2, mtimeMs: 1, mode: 0o100644 },
+          { name: "c.txt", kind: "file", size: 3, mtimeMs: 2, mode: 0o100644 },
+        ] as FsEntry[],
+        truncated: false,
+      }),
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: neverCalled,
+    };
+    const names = () =>
+      screen.getAllByRole("button", { name: /\.txt$/ }).map((button) => button.textContent);
+
+    const slot = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
+      experimental_rpcContract: rpcContract,
+      rpc: stubs,
+    });
+    await slot.findByText("a.txt");
+    expect(names()).toEqual(["a.txt", "b.txt", "c.txt"]); // default: name asc
+
+    fireEvent.click(screen.getByRole("button", { name: "Sort by name" }));
+    await waitFor(() => expect(names()).toEqual(["c.txt", "b.txt", "a.txt"]));
+
+    // Last modified defaults to newest-first, toggles to oldest-first.
+    fireEvent.click(screen.getByRole("button", { name: "Sort by last modified" }));
+    await waitFor(() => expect(names()).toEqual(["b.txt", "c.txt", "a.txt"]));
+    fireEvent.click(screen.getByRole("button", { name: "Sort by last modified" }));
+    await waitFor(() => expect(names()).toEqual(["a.txt", "c.txt", "b.txt"]));
     slot.lifecycle.unmount();
   });
 

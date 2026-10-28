@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Sortable listing**: click the **Name** / **Size** / **Last modified**
+  column headers to sort the browser (asc/desc, mtime defaults to
+  newest-first); the choice persists across mounts and reloads. Expanded
+  folders sort with the same rule.
 - **Expandable folders**: the **>** chevron on a dir row expands/collapses
   its contents in place (nested, cached per mount), while clicking the
   folder row still navigates into it — peek without leaving the path.
