@@ -1,18 +1,26 @@
-// Remote directory browser: breadcrumb navigation, dir listing, and row
-// actions (open, rename, delete) plus new-file/new-folder/refresh tools.
+// Remote directory browser: breadcrumb navigation, dir listing, row
+// actions (open, rename, delete), a name filter, and a right-click context
+// menu with the create tools (new file / new folder).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { experimental_useAppPanel, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "../server";
 import type { ConfigView, FsEntry } from "../contract";
 import { Button } from "@/components/ui/button";
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuPortal,
+  ContextMenuTrigger,
+} from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
 import { ConfirmDialog } from "./confirm-dialog";
 import { clearDirtyDraft, getDirtyDraft } from "./draft-store";
-import { errorMessage, formatBytes, formatMtime, joinRel, segmentsRel } from "./utils";
+import { errorMessage, formatBytes, formatMtime, joinRel, parentRel, segmentsRel } from "./utils";
 
 function EntryIcon({ kind, className }: { kind: FsEntry["kind"]; className?: string }) {
   const name = kind === "dir" ? "FolderOpen" : kind === "link" ? "Link" : "FileText";
@@ -153,6 +161,8 @@ export function RemoteBrowser({
 
   const [cwd, setCwd] = useState(initialPath ?? "");
   const [entries, setEntries] = useState<FsEntry[] | null>(null);
+  const [filter, setFilter] = useState("");
+  const filterQuery = filter.trim().toLowerCase();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [truncated, setTruncated] = useState(false);
@@ -176,6 +186,10 @@ export function RemoteBrowser({
     path: string;
     name: string;
   } | null>(null);
+
+  /** Folder path to create a new file/folder *in*, set by right-clicking an
+   * entry. Null means right-click hit empty space — create in `cwd` instead. */
+  const [contextFolder, setContextFolder] = useState<string | null>(null);
 
   const renameTarget =
     dialog !== null && dialog.kind === "rename" ? dialog.entry : null;
@@ -299,6 +313,7 @@ export function RemoteBrowser({
 
   const invalidate = useCallback(() => {
     cache.current.clear();
+    childrenCache.current.clear();
     setChildren({});
     for (const path of expanded) loadChildren(path);
     void load(cwd, true);
@@ -308,7 +323,8 @@ export function RemoteBrowser({
     setDialogBusy(true);
     setDialogError(null);
     try {
-      const path = joinRel(cwd, value);
+      const parent = contextFolder ?? cwd;
+      const path = joinRel(parent, value);
       if (kind === "folder") {
         await rpc.call("fs_mkdir", { mount, path });
       } else {
@@ -368,12 +384,19 @@ export function RemoteBrowser({
 
   const crumbs = segmentsRel(cwd);
 
+  // Directory the create menu will target: a right-clicked folder/file, or
+  // the current directory when the click hit empty space.
+  const createParent = contextFolder ?? cwd;
+  const createParentLabel = createParent === "" ? "/" : createParent;
+
   // Recursive row builder: expanded dirs render their children inline under
-  // the row (indented); rename/delete stay on top-level rows only.
+  // the row (indented); rename/delete stay on top-level rows only. The name
+  // filter hides entries (files and folders alike) whose name doesn't match.
   const listingRows: ReactNode[] = [];
   const buildRows = (dirEntries: FsEntry[], dirPath: string, depth: number) => {
+    const visible = filterQuery === "" ? dirEntries : dirEntries.filter((e) => e.name.toLowerCase().includes(filterQuery));
     const factor = sortDir === "asc" ? 1 : -1;
-    const sorted = [...dirEntries].sort((a, b) => {
+    const sorted = [...visible].sort((a, b) => {
       const compare =
         sortKey === "name"
           ? a.name.localeCompare(b.name)
@@ -414,6 +437,10 @@ export function RemoteBrowser({
             onClick={() => {
               if (isDir) navigate(path);
               else openFile(path, entry.name);
+            }}
+            onContextMenu={() => {
+              // Right-click on a folder → create inside it; on a file → parent dir.
+              setContextFolder(isDir ? path : parentRel(path));
             }}
             title={isDir ? `Open ${entry.name}` : `Edit ${entry.name}`}
           >
@@ -524,95 +551,127 @@ export function RemoteBrowser({
             );
           })}
         </div>
-        <div className="flex items-center gap-1 border-t border-border px-3 py-1.5">
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setDialog({ kind: "file" })}>
-            <Icon name="Plus" className="mr-1 size-3.5" />
-            New file
-          </Button>
-          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => setDialog({ kind: "folder" })}>
-            <Icon name="FolderOpen" className="mr-1 size-3.5" />
-            New folder
-          </Button>
+        <div className="flex items-center gap-1.5 border-t border-border px-3 py-1.5">
+          <div className="relative min-w-0 flex-1">
+            <Input
+              value={filter}
+              onChange={(event) => setFilter(event.target.value)}
+              placeholder="Filter files and folders…"
+              aria-label="Filter by name"
+              className="h-7 pr-7 text-xs"
+            />
+            {filter === "" ? null : (
+              <button
+                type="button"
+                aria-label="Clear filter"
+                className="absolute right-1 top-1/2 flex size-5 -translate-y-1/2 items-center justify-center rounded text-muted-foreground hover:bg-state-hover hover:text-foreground"
+                onClick={() => setFilter("")}
+              >
+                <Icon name="X" className="size-3" />
+              </button>
+            )}
+          </div>
           <Button variant="ghost" size="icon" className="size-7" aria-label="Refresh" onClick={invalidate}>
             <Icon name="ArrowReloadHorizontal" className="size-3.5" />
           </Button>
         </div>
       </div>
 
-      {/* Listing */}
-      <div className="min-h-0 flex-1 overflow-y-auto p-2">
-        {loading && entries === null ? (
-          <p className="px-2 py-6 text-center text-sm text-muted-foreground">
-            Loading {cwd === "" ? "/" : cwd}…
-          </p>
-        ) : error !== null ? (
-          <div className="space-y-2 px-2 py-6 text-center">
-            <p className="text-sm text-destructive">{error}</p>
-            <Button variant="outline" size="sm" onClick={() => void load(cwd, true)}>
-              Retry
-            </Button>
-          </div>
-        ) : entries !== null && entries.length === 0 ? (
-          <p className="px-2 py-6 text-center text-sm text-muted-foreground">Empty directory</p>
-        ) : (
-          <>
-            <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
-              <li className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                <span className="size-6 shrink-0" />
-                {(["name", "size", "mtimeMs"] as const).map((key) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={cn(
-                      "font-medium hover:text-foreground",
-                      key === "name" && "flex min-w-0 flex-1 items-center gap-1 text-left",
-                      key === "size" && "hidden w-20 shrink-0 text-right sm:block",
-                      key === "mtimeMs" && "hidden w-24 shrink-0 text-right md:block",
-                      sortKey === key && "text-foreground",
-                    )}
-                    onClick={() => toggleSort(key)}
-                    aria-label={`Sort by ${sortLabel[key].toLowerCase()}`}
-                  >
-                    {sortLabel[key]}
-                    {sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : null}
-                  </button>
-                ))}
-              </li>
-              {listingRows}
-            </ul>
-            {truncated ? (
-              <p className="mt-2 text-center text-xs text-muted-foreground">
-                List truncated (2000 entries shown)
+      {/* Listing — right-click anywhere (rows, headers, empty space) opens
+          the create menu: new file / new folder. Right-clicking a folder
+          entry creates inside that folder instead of the current directory. */}
+      <ContextMenu>
+        <ContextMenuTrigger asChild>
+          <div
+            className="min-h-0 flex-1 overflow-y-auto p-2"
+            onContextMenuCapture={() => setContextFolder(null)}
+          >
+            {loading && entries === null ? (
+              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                Loading {cwd === "" ? "/" : cwd}…
               </p>
-            ) : null}
-          </>
-        )}
-      </div>
+            ) : error !== null ? (
+              <div className="space-y-2 px-2 py-6 text-center">
+                <p className="text-sm text-destructive">{error}</p>
+                <Button variant="outline" size="sm" onClick={() => void load(cwd, true)}>
+                  Retry
+                </Button>
+              </div>
+            ) : entries !== null && entries.length === 0 ? (
+              <p className="px-2 py-6 text-center text-sm text-muted-foreground">Empty directory</p>
+            ) : entries !== null && listingRows.length === 0 ? (
+              <p className="px-2 py-6 text-center text-sm text-muted-foreground">
+                No matches for "{filter}"
+              </p>
+            ) : (
+              <>
+                <ul className="divide-y divide-border overflow-hidden rounded-lg border border-border bg-card">
+                  <li className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                    <span className="size-6 shrink-0" />
+                    {(["name", "size", "mtimeMs"] as const).map((key) => (
+                      <button
+                        key={key}
+                        type="button"
+                        className={cn(
+                          "font-medium hover:text-foreground",
+                          key === "name" && "flex min-w-0 flex-1 items-center gap-1 text-left",
+                          key === "size" && "hidden w-20 shrink-0 text-right sm:block",
+                          key === "mtimeMs" && "hidden w-24 shrink-0 text-right md:block",
+                          sortKey === key && "text-foreground",
+                        )}
+                        onClick={() => toggleSort(key)}
+                        aria-label={`Sort by ${sortLabel[key].toLowerCase()}`}
+                      >
+                        {sortLabel[key]}
+                        {sortKey === key ? (sortDir === "asc" ? " ↑" : " ↓") : null}
+                      </button>
+                    ))}
+                  </li>
+                  {listingRows}
+                </ul>
+                {truncated ? (
+                  <p className="mt-2 text-center text-xs text-muted-foreground">
+                    List truncated (2000 entries shown)
+                  </p>
+                ) : null}
+              </>
+            )}
+          </div>
+        </ContextMenuTrigger>
+        <ContextMenuContent>
+          <ContextMenuItem onSelect={() => setDialog({ kind: "file" })}>
+            New file
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => setDialog({ kind: "folder" })}>
+            New folder
+          </ContextMenuItem>
+        </ContextMenuContent>
+      </ContextMenu>
 
       {/* Dialogs */}
       <NameDialog
         open={dialog !== null && dialog.kind === "file"}
         title="New file"
-        description={`In ${cwd === "" ? "/" : cwd}`}
+        description={`In ${createParentLabel}`}
         initial=""
         placeholder="file.txt"
         confirmLabel="Create"
         busy={dialogBusy}
         error={dialogError}
         onSubmit={(value) => void createEntry(value, "file")}
-        onClose={() => setDialog(null)}
+        onClose={() => { setDialog(null); setContextFolder(null); }}
       />
       <NameDialog
         open={dialog !== null && dialog.kind === "folder"}
         title="New folder"
-        description={`In ${cwd === "" ? "/" : cwd}`}
+        description={`In ${createParentLabel}`}
         initial=""
         placeholder="folder"
         confirmLabel="Create"
         busy={dialogBusy}
         error={dialogError}
         onSubmit={(value) => void createEntry(value, "folder")}
-        onClose={() => setDialog(null)}
+        onClose={() => { setDialog(null); setContextFolder(null); }}
       />
       <NameDialog
         open={renameTarget !== null}

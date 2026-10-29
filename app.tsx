@@ -27,8 +27,41 @@ const SaveGlyph: ComponentType<{ className?: string }> = ({ className }) => (
   </svg>
 );
 
+const ReplaceGlyph: ComponentType<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.74 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+  </svg>
+);
+
+const ReplaceAllGlyph: ComponentType<{ className?: string }> = ({ className }) => (
+  <svg
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    strokeWidth="1.6"
+    strokeLinecap="round"
+    strokeLinejoin="round"
+    className={className}
+    aria-hidden="true"
+  >
+    <path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.74 10h-2.08A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z" />
+    <circle cx="12" cy="12" r="1.5" />
+  </svg>
+);
+
 export default definePluginApp((app) => {
   app.experimental_icons.register({ name: "Save", component: SaveGlyph });
+  app.experimental_icons.register({ name: "Replace", component: ReplaceGlyph });
+  app.experimental_icons.register({ name: "ReplaceAll", component: ReplaceAllGlyph });
 
   // "SSH FS" page: mount list + remote file browser.
   app.slots.navPanel({

@@ -1,7 +1,47 @@
 # Changelog
 
 ## Unreleased
+- **Editor find & replace bar layout**: the show-replace toggle stays on the left
+  before the find field whether or not replace is shown; the replace row uses a
+  28px leading spacer so both fields share the same 28px start offset. The bar is a
+  CSS grid with a shared capped input track (`minmax(80px, 280px)`), so the Find and
+  Replace inputs are always the same width and the find field stretches to the end
+  of the replace field (edges aligned). Inline icons (match-case, whole-word, regex,
+  count, prev/next, close / preserve-case, replace, replace-all) hug right after
+  the field instead of spreading to the far edge, so the bar no longer sprawls wider
+  on the replace side.
 
+ - **Find & replace in the editor**: a Monaco-style widget — **Ctrl/Cmd+F**
+   opens find, **Ctrl/Cmd+H** adds the replace row. Monaco-like layout with
+   icon buttons (prev/next chevrons, replace toggle, close) and glyph toggles
+   **Aa** (match case), **ab** (whole word), **.*** (regex) inline to the
+   right of the find field, and **aA** (preserve case) in the replace row
+   (Alt+C/W/R/P). Live highlights over the text (current match emphasized),
+   match count with next/prev (Enter / Shift+Enter), circular-arrow **↻**
+   (replace) / same with a center dot **⊙** (replace all) icon buttons, red
+   input border on no-results or an invalid expression; `$&`, `$$` (and `$1`-`$99` in
+   regex mode) expand in replacements. Escape closes the widget and removes the
+   highlights.
+- **Editor toolbar**: simplified to show only the file path (truncated from
+  the front so the filename stays visible), save, and reload icon buttons
+  (removed the mtime, file-size, and dirty-status text). The find/replace bar
+  has tighter spacing, tooltips on every icon button, and collapses non-essential
+  toggles (match case, whole word, regex, preserve-case, count, replace actions) on
+  narrow panels so only the find/replace fields, prev/next, close, and replace-toggle
+  remain.
+  - **Right-click create menu**: **New file / New folder** moved out of the
+   browser toolbar into a text-only context menu — right-click a row or empty
+   space in the listing to create in the current directory. Right-clicking a
+   folder entry creates inside that folder (and right-clicking a file entry
+   creates in that file's parent directory), so the create target always
+   matches the entry you right-clicked instead of the breadcrumb path.
+  Expanded folders no longer get stuck on "Loading" after a create/rename/delete/
+   refresh: `invalidate()` now clears the children cache alongside the listing
+   cache, so `loadChildren` actually re-fetches instead of bailing out on stale cache.
+- **Name filter**: the browser toolbar now has a filter box that hides files
+  and folders whose name doesn't contain the typed text (case-insensitive,
+  applies to expanded children too), with a clear button and a "No matches"
+  state.
 - **Unsaved edits survive tab switches**: the editor keeps a draft of every
   keystroke (frontend-only, per `mount:path`) and restores it when you come
   back, so switching editor tabs or leaving the panel never discards work

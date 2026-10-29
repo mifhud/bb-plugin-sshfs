@@ -54,9 +54,13 @@ bb plugin config sshfs set secrets '{"prod":{"password":"…","passphrase":"…"
   with **Save** or Ctrl/Cmd+S. Switching tabs or leaving the panel keeps your
   unsaved edits — they are restored when you return; reopening a file that
   still has an unsaved draft asks **Keep draft / Discard / Cancel**. Binary
-  files and files over 4 MiB are refused with a clear message.
-- New file / new folder / rename / delete (recursive, confirmed) work from the
-  row actions.
+  files and files over 4 MiB are refused with a clear message. A Monaco-style
+  find/replace widget (**Ctrl/Cmd+F**, **Ctrl/Cmd+H** for replace) adds live
+  highlights, match count with next/prev, match case, whole word, regex,
+  preserve case, and replace/replace-all.
+- **New file** and **New folder** live in the right-click context menu (on a
+  row or on empty space); rename and delete stay as row actions. The filter
+  box hides files and folders whose name doesn't contain the typed text.
 - The CLI covers the same surface headlessly:
 
 ```sh
