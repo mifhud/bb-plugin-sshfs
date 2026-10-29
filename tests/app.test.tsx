@@ -821,6 +821,224 @@ describe("SSH FS browser", () => {
     expect(screen.queryByText("apps")).toBeNull();
     slot.lifecycle.unmount();
   });
+  it("renames entries from the right-click context menu", async () => {
+    const renames: Array<{ from: string; to: string }> = [];
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected: true }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: () => ({
+        path: ".",
+        entries: [
+          { name: "old.txt", kind: "file", size: 1, mtimeMs: 1, mode: 0o100644 },
+        ] as FsEntry[],
+        truncated: false,
+      }),
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: ({ from, to }: { from: string; to: string }) => {
+        renames.push({ from, to });
+        return { renamed: true };
+      },
+    };
+
+    const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
+      app.navPanels[0]!,
+      { subPath: "" },
+      { experimental_rpcContract: rpcContract, rpc: stubs },
+    );
+    await slot.findByText("old.txt");
+
+    // Right-click opens the context menu with Rename/Delete entries.
+    fireEvent.contextMenu(screen.getByRole("button", { name: "old.txt" }));
+    await screen.findByRole("menuitem", { name: "Rename" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+
+    // The rename dialog prefills the current name and writes to the entry's
+    // full path (not joinRel(cwd, name), which breaks for nested entries).
+    const dialog = screen.getByRole("dialog");
+    expect(dialog.querySelector("input")?.value).toBe("old.txt");
+    fireEvent.change(screen.getByRole("textbox", { name: "Rename" }), {
+      target: { value: "new.txt" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(renames).toEqual([{ from: "old.txt", to: "new.txt" }]));
+    slot.lifecycle.unmount();
+  });
+
+  it("renames expanded children via context menu", async () => {
+    const renames: Array<{ from: string; to: string }> = [];
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected: true }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: ({ path }: { mount: string; path: string }) => {
+        if (path === "." || path === "") {
+          return {
+            path: ".",
+            entries: [
+              { name: "docs", kind: "dir", size: 0, mtimeMs: 1, mode: 0o040755 },
+            ] as FsEntry[],
+            truncated: false,
+          };
+        }
+        return {
+          path,
+          entries: [
+            { name: "child.txt", kind: "file", size: 1, mtimeMs: 1, mode: 0o100644 },
+          ] as FsEntry[],
+          truncated: false,
+        };
+      },
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: ({ from, to }: { from: string; to: string }) => {
+        renames.push({ from, to });
+        return { renamed: true };
+      },
+    };
+
+    const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
+      app.navPanels[0]!,
+      { subPath: "" },
+      { experimental_rpcContract: rpcContract, rpc: stubs },
+    );
+    await slot.findByText("docs");
+
+    // Expand the folder so its children render inline.
+    fireEvent.click(screen.getByRole("button", { name: "Expand docs" }));
+    await screen.findByText("child.txt");
+
+    // Right-click the expanded child (depth > 0) — the old code only had
+    // hover buttons for depth === 0; now the context menu works for all rows.
+    fireEvent.contextMenu(screen.getByRole("button", { name: "child.txt" }));
+    await screen.findByRole("menuitem", { name: "Rename" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Rename" }));
+
+    // Rename to a sibling name: parent is "docs", so `to` = "docs/new.txt".
+    fireEvent.change(screen.getByRole("textbox", { name: "Rename" }), {
+      target: { value: "new.txt" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    await waitFor(() =>
+      expect(renames).toEqual([{ from: "docs/child.txt", to: "docs/new.txt" }]),
+    );
+    slot.lifecycle.unmount();
+  });
+
+  it("deletes entries from the right-click context menu", async () => {
+    const deletes: string[] = [];
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected: true }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: () => ({
+        path: ".",
+        entries: [
+          { name: "a.txt", kind: "file", size: 1, mtimeMs: 1, mode: 0o100644 },
+        ] as FsEntry[],
+        truncated: false,
+      }),
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: ({ path }: { mount: string; path: string }) => {
+        deletes.push(path);
+        return { removed: true };
+      },
+      fs_rename: neverCalled,
+    };
+
+    const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
+      app.navPanels[0]!,
+      { subPath: "" },
+      { experimental_rpcContract: rpcContract, rpc: stubs },
+    );
+    await slot.findByText("a.txt");
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "a.txt" }));
+    await screen.findByRole("menuitem", { name: "Delete" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+    const confirmDialog = await screen.findByText(/Delete a\.txt?/);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deletes).toEqual(["a.txt"]));
+    slot.lifecycle.unmount();
+  });
+
+  it("deletes expanded children via context menu", async () => {
+    const deletes: string[] = [];
+    const stubs = {
+      configs_list: () => ({ configs: [{ ...PROD_VIEW, connected: true }] }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: ({ path }: { mount: string; path: string }) => {
+        if (path === "." || path === "") {
+          return {
+            path: ".",
+            entries: [
+              { name: "docs", kind: "dir", size: 0, mtimeMs: 1, mode: 0o040755 },
+            ] as FsEntry[],
+            truncated: false,
+          };
+        }
+        return {
+          path,
+          entries: [
+            { name: "child.txt", kind: "file", size: 1, mtimeMs: 1, mode: 0o100644 },
+          ] as FsEntry[],
+          truncated: false,
+        };
+      },
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: ({ path }: { mount: string; path: string }) => {
+        deletes.push(path);
+        return { removed: true };
+      },
+      fs_rename: neverCalled,
+    };
+
+    const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
+      app.navPanels[0]!,
+      { subPath: "" },
+      { experimental_rpcContract: rpcContract, rpc: stubs },
+    );
+    await slot.findByText("docs");
+
+    fireEvent.click(screen.getByRole("button", { name: "Expand docs" }));
+    await screen.findByText("child.txt");
+
+    fireEvent.contextMenu(screen.getByRole("button", { name: "child.txt" }));
+    await screen.findByRole("menuitem", { name: "Delete" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Delete" }));
+
+    const confirmDialog = await screen.findByText(/Delete child\.txt?/);
+    fireEvent.click(screen.getByRole("button", { name: "Delete" }));
+    await waitFor(() => expect(deletes).toEqual(["docs/child.txt"]));
+    slot.lifecycle.unmount();
+  });
 });
 
 describe("Remote file editor", () => {

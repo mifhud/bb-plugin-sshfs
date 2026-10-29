@@ -13,6 +13,7 @@ import {
   ContextMenuItem,
   ContextMenuPortal,
   ContextMenuTrigger,
+  ContextMenuSeparator,
 } from "@/components/ui/context-menu";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
@@ -96,7 +97,7 @@ function NameDialog({
 type BrowserDialog =
   | { kind: "file" }
   | { kind: "folder" }
-  | { kind: "rename"; entry: FsEntry };
+  | { kind: "rename"; entry: FsEntry; path: string };
 
 export function RemoteBrowser({
   config,
@@ -179,7 +180,7 @@ export function RemoteBrowser({
   const [dialog, setDialog] = useState<BrowserDialog | null>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const [dialogBusy, setDialogBusy] = useState(false);
-  const [confirmDelete, setConfirmDelete] = useState<FsEntry | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<{ entry: FsEntry; path: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [pendingOpen, setPendingOpen] = useState<{
     mount: string;
@@ -187,12 +188,13 @@ export function RemoteBrowser({
     name: string;
   } | null>(null);
 
-  /** Folder path to create a new file/folder *in*, set by right-clicking an
-   * entry. Null means right-click hit empty space — create in `cwd` instead. */
-  const [contextFolder, setContextFolder] = useState<string | null>(null);
+  /** The entry that was right-clicked (with its root-relative path). Null
+   * means right-click hit empty space — create uses `cwd`, rename/delete
+   * are disabled. */
+  const [contextEntry, setContextEntry] = useState<{ entry: FsEntry; path: string } | null>(null);
 
   const renameTarget =
-    dialog !== null && dialog.kind === "rename" ? dialog.entry : null;
+    dialog !== null && dialog.kind === "rename" ? { entry: dialog.entry, path: dialog.path } : null;
   const mount = config.name;
 
   const navigate = (path: string) => {
@@ -323,7 +325,7 @@ export function RemoteBrowser({
     setDialogBusy(true);
     setDialogError(null);
     try {
-      const parent = contextFolder ?? cwd;
+      const parent = contextEntry !== null ? (contextEntry.entry.kind === "dir" ? contextEntry.path : parentRel(contextEntry.path)) : cwd;
       const path = joinRel(parent, value);
       if (kind === "folder") {
         await rpc.call("fs_mkdir", { mount, path });
@@ -347,10 +349,11 @@ export function RemoteBrowser({
     setDialogBusy(true);
     setDialogError(null);
     try {
+      const parent = parentRel(renameTarget.path);
       await rpc.call("fs_rename", {
         mount,
-        from: joinRel(cwd, renameTarget.name),
-        to: joinRel(cwd, value),
+        from: renameTarget.path,
+        to: joinRel(parent, value),
       });
       toast.success(`Renamed to ${value}`);
       setDialog(null);
@@ -364,10 +367,10 @@ export function RemoteBrowser({
 
   const deleteEntry = async () => {
     if (confirmDelete === null) return;
-    const entry = confirmDelete;
+    const { entry, path } = confirmDelete;
     setBusy(true);
     try {
-      await rpc.call("fs_delete", { mount, path: joinRel(cwd, entry.name) });
+      await rpc.call("fs_delete", { mount, path });
       toast.success(`Deleted ${entry.name}`);
       invalidate();
     } catch (cause) {
@@ -386,12 +389,14 @@ export function RemoteBrowser({
 
   // Directory the create menu will target: a right-clicked folder/file, or
   // the current directory when the click hit empty space.
-  const createParent = contextFolder ?? cwd;
+  const createParent = contextEntry !== null ? (contextEntry.entry.kind === "dir" ? contextEntry.path : parentRel(contextEntry.path)) : cwd;
   const createParentLabel = createParent === "" ? "/" : createParent;
 
   // Recursive row builder: expanded dirs render their children inline under
-  // the row (indented); rename/delete stay on top-level rows only. The name
-  // filter hides entries (files and folders alike) whose name doesn't match.
+  // the row (indented); hover rename/delete buttons are on top-level rows
+  // only — the context menu offers them for all rows including expanded
+  // children. The name filter hides entries (files and folders alike)
+  // whose name doesn't match.
   const listingRows: ReactNode[] = [];
   const buildRows = (dirEntries: FsEntry[], dirPath: string, depth: number) => {
     const visible = filterQuery === "" ? dirEntries : dirEntries.filter((e) => e.name.toLowerCase().includes(filterQuery));
@@ -440,7 +445,7 @@ export function RemoteBrowser({
             }}
             onContextMenu={() => {
               // Right-click on a folder → create inside it; on a file → parent dir.
-              setContextFolder(isDir ? path : parentRel(path));
+              setContextEntry({ entry, path });
             }}
             title={isDir ? `Open ${entry.name}` : `Edit ${entry.name}`}
           >
@@ -462,7 +467,7 @@ export function RemoteBrowser({
                 aria-label="Rename"
                 onClick={() => {
                   setDialogError(null);
-                  setDialog({ kind: "rename", entry });
+                  setDialog({ kind: "rename", entry, path });
                 }}
               >
                 <Icon name="EditFile" className="size-3.5" />
@@ -472,7 +477,7 @@ export function RemoteBrowser({
                 size="icon"
                 className="size-7 text-muted-foreground hover:text-destructive"
                 aria-label="Delete"
-                onClick={() => setConfirmDelete(entry)}
+                onClick={() => setConfirmDelete({ entry, path })}
               >
                 <Icon name="Trash2" className="size-3.5" />
               </Button>
@@ -584,7 +589,7 @@ export function RemoteBrowser({
         <ContextMenuTrigger asChild>
           <div
             className="min-h-0 flex-1 overflow-y-auto p-2"
-            onContextMenuCapture={() => setContextFolder(null)}
+            onContextMenuCapture={() => setContextEntry(null)}
           >
             {loading && entries === null ? (
               <p className="px-2 py-6 text-center text-sm text-muted-foreground">
@@ -645,6 +650,21 @@ export function RemoteBrowser({
           <ContextMenuItem onSelect={() => setDialog({ kind: "folder" })}>
             New folder
           </ContextMenuItem>
+          {contextEntry !== null ? (
+            <>
+              <ContextMenuSeparator />
+              <ContextMenuItem
+                onSelect={() => setDialog({ kind: "rename", entry: contextEntry.entry, path: contextEntry.path })}
+              >
+                Rename
+              </ContextMenuItem>
+              <ContextMenuItem
+                onSelect={() => setConfirmDelete(contextEntry)}
+              >
+                Delete
+              </ContextMenuItem>
+            </>
+          ) : null}
         </ContextMenuContent>
       </ContextMenu>
 
@@ -659,7 +679,7 @@ export function RemoteBrowser({
         busy={dialogBusy}
         error={dialogError}
         onSubmit={(value) => void createEntry(value, "file")}
-        onClose={() => { setDialog(null); setContextFolder(null); }}
+        onClose={() => { setDialog(null); setContextEntry(null); }}
       />
       <NameDialog
         open={dialog !== null && dialog.kind === "folder"}
@@ -671,12 +691,12 @@ export function RemoteBrowser({
         busy={dialogBusy}
         error={dialogError}
         onSubmit={(value) => void createEntry(value, "folder")}
-        onClose={() => { setDialog(null); setContextFolder(null); }}
+        onClose={() => { setDialog(null); setContextEntry(null); }}
       />
       <NameDialog
         open={renameTarget !== null}
         title="Rename"
-        initial={renameTarget?.name ?? ""}
+        initial={renameTarget?.entry.name ?? ""}
         placeholder="new-name"
         confirmLabel="Rename"
         busy={dialogBusy}
@@ -703,9 +723,9 @@ export function RemoteBrowser({
       />
       <ConfirmDialog
         open={confirmDelete !== null}
-        title={`Delete ${confirmDelete?.name ?? ""}?`}
+        title={`Delete ${confirmDelete?.entry.name ?? ""}?`}
         description={
-          confirmDelete !== null && confirmDelete.kind === "dir"
+          confirmDelete !== null && confirmDelete.entry.kind === "dir"
             ? "The whole directory and its contents will be deleted remotely. This cannot be undone."
             : "This file will be deleted remotely. This cannot be undone."
         }

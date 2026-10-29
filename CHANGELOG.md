@@ -38,6 +38,11 @@
   Expanded folders no longer get stuck on "Loading" after a create/rename/delete/
    refresh: `invalidate()` now clears the children cache alongside the listing
    cache, so `loadChildren` actually re-fetches instead of bailing out on stale cache.
+- **Rename / Delete in the context menu**: right-click any entry — including
+  expanded folder children — to Rename or Delete it from the context menu, not
+  just via the top-level hover buttons. The right-click target (not the
+  breadcrumb path) determines the create/rename/delete target path, so
+  operations on nested children use the correct root-relative path.
 - **Name filter**: the browser toolbar now has a filter box that hides files
   and folders whose name doesn't contain the typed text (case-insensitive,
   applies to expanded children too), with a clear button and a "No matches"
