@@ -257,6 +257,15 @@ export function RemoteBrowser({
     });
   };
 
+  const openTerminal = (dirPath: string, label: string) => {
+    panel.experimental_openTab({
+      surface: { kind: "current" },
+      tab: { id: "terminal", context: { kind: "nav-panel", panelId: "sshfs" }, availability: "action" },
+      params: { mount, path: dirPath },
+      title: `Terminal: ${label}`,
+    });
+  };
+
   const openFile = (path: string, name: string) => {
     // Reopening a file that still has an unsaved draft asks what to do with
     // it instead of silently restoring or silently discarding it.
@@ -649,6 +658,9 @@ export function RemoteBrowser({
           </ContextMenuItem>
           <ContextMenuItem onSelect={() => setDialog({ kind: "folder" })}>
             New folder
+          </ContextMenuItem>
+          <ContextMenuItem onSelect={() => openTerminal(createParent, createParentLabel)}>
+            Open terminal
           </ContextMenuItem>
           {contextEntry !== null ? (
             <>

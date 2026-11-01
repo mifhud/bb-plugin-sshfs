@@ -6,6 +6,7 @@ import type { ComponentType } from "react";
 import { definePluginApp } from "@get-bb/plugin-sdk/app";
 import { SshFsPage } from "./components/sshfs-page";
 import { RemoteFileEditor } from "./components/file-editor";
+import { SshTerminal } from "./components/ssh-terminal";
 
 // Floppy-disk glyph the BB host icon set lacks; registered so the editor can
 // render `Icon name="Save"` (unknown names would fall back to the host's Zap).
@@ -82,5 +83,16 @@ export default definePluginApp((app) => {
     title: "Remote file",
     icon: "EditFile",
     component: RemoteFileEditor,
+  });
+
+  // "Remote terminal" tab, opened from the browser's right-click context menu
+  // with `{ mount, path }` params. Starts a PTY shell on the SSH host.
+  app.slots.experimental_tab({
+    context: { kind: "nav-panel", panelId: "sshfs" },
+    availability: "action",
+    id: "terminal",
+    title: "Terminal",
+    icon: "Terminal",
+    component: SshTerminal,
   });
 });

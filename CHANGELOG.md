@@ -65,6 +65,14 @@
 - **Icon consistency**: the browser's mount-root button and empty state now
   use the built-in `Terminal` icon like the nav panel and settings branding.
 
+- **Remote SSH terminal**: right-click any folder (or file, for its parent
+  directory) in the browser and choose **Open terminal** to launch an xterm.js
+  terminal tab connected to a PTY shell on the remote server. The shell starts
+  in the right-clicked directory (resolved against the mount root on the
+  server), not the breadcrumb path — matching the context menu's existing
+  create/rename/delete behavior. Terminal output streams via BB realtime;
+  resizing the tab sends a PTY resize to keep the remote shell in sync.
+
 ## 0.2.0 — 2026-10-27
 
 - **Fix remote writes**: the file mode was passed where ssh2 expects the open

@@ -9,6 +9,8 @@ import {
   MAX_FILE_BYTES,
   configSchema,
   rpcContract,
+  SSHF_CHANGED,
+  SSHF_TERMINAL_DATA,
   type ConfigSecrets,
   type ConfigView,
   type SshFsConfig,
@@ -20,12 +22,9 @@ import {
   validateConfigs,
 } from "./lib/config";
 import { isBinaryBuffer, resolveRemote } from "./lib/paths";
-import { SftpManager, type MountInfo, type SftpSession } from "./lib/sftp";
+import { ShellChannel, SftpManager, type MountInfo, type SftpSession } from "./lib/sftp";
 
 export { rpcContract } from "./contract";
-
-/** Realtime channel the frontend refetches on (connection/config changes). */
-export const SSHF_CHANGED = "sshfs-changed";
 
 const configsJsonSchema = z
   .string()
@@ -309,6 +308,40 @@ export default async function plugin(bb: BbPluginApi): Promise<void> {
         await session.rename(resolveRemote(root, from), resolveRemote(root, to));
         return { renamed: true };
       });
+    },
+    terminal_open: async ({ mount: name, path, cols, rows }) => {
+      await guardPaths(name, [path]);
+      const { configs, secrets } = await loadState();
+      const config = configs.find((candidate) => candidate.name === name);
+      if (config === undefined) throw new Error(`No SSH FS config named "${name}". Run "bb sshfs list".`);
+      const connectOptions = sshConnectConfig(config, secrets);
+      // Resolve the mount root so `cd` targets the correct absolute path on
+      // the remote host. `connect` reuses the existing connection if already open.
+      const { root } = await manager.connect(name, config, connectOptions);
+      const absPath = resolveRemote(root, path);
+      const { channel } = await manager.openShell(name, config, connectOptions, cols, rows);
+      // Change directory to the requested path inside the new PTY shell.
+      channel.write(`cd '${absPath}'\n`);
+      // Stream shell output (stdout + stderr, merged) to the frontend via realtime.
+      channel.onData((data) => {
+        bb.realtime.publish(SSHF_TERMINAL_DATA, { sessionId: channel.id, data });
+      });
+      channel.onClose(() => {
+        bb.realtime.publish(SSHF_TERMINAL_DATA, { sessionId: channel.id, closed: true });
+      });
+      return { sessionId: channel.id };
+    },
+    terminal_write: async ({ sessionId, data }) => {
+      manager.shellWrite(sessionId, data);
+      return { written: true };
+    },
+    terminal_resize: async ({ sessionId, cols, rows }) => {
+      manager.shellResize(sessionId, cols, rows);
+      return { resized: true };
+    },
+    terminal_close: async ({ sessionId }) => {
+      const closed = manager.shellClose(sessionId);
+      return { closed };
     },
   });
 

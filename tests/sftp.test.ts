@@ -183,6 +183,14 @@ function fakeSession(calls: string[]): SftpSession {
     delete: async () => undefined,
     rename: async () => undefined,
     close: () => undefined,
+    shell: async () => ({
+      id: "fake-shell",
+      write: () => undefined,
+      resize: () => undefined,
+      close: () => undefined,
+      onData: () => undefined,
+      onClose: () => undefined,
+    }),
   };
 }
 

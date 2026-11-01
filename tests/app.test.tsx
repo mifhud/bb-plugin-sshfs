@@ -88,6 +88,10 @@ describe("SSH FS page", () => {
           fs_mkdir: neverCalled,
           fs_delete: neverCalled,
           fs_rename: neverCalled,
+          terminal_open: neverCalled,
+          terminal_write: neverCalled,
+          terminal_resize: neverCalled,
+          terminal_close: neverCalled,
         },
       },
     );
@@ -129,6 +133,10 @@ describe("SSH FS page", () => {
           fs_mkdir: neverCalled,
           fs_delete: neverCalled,
           fs_rename: neverCalled,
+          terminal_open: neverCalled,
+          terminal_write: neverCalled,
+          terminal_resize: neverCalled,
+          terminal_close: neverCalled,
         },
       },
     );
@@ -169,6 +177,10 @@ describe("SSH FS page", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const first = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
@@ -222,6 +234,10 @@ describe("SSH FS page", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
@@ -268,6 +284,10 @@ describe("SSH FS page", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     // Keep draft: the file opens and the draft stays for the editor to restore.
@@ -323,6 +343,10 @@ describe("SSH FS page", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
     const names = () =>
       screen.getAllByRole("button", { name: /\.txt$/ }).map((button) => button.textContent);
@@ -366,6 +390,10 @@ describe("SSH FS page", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     // Session: user connects, then the page is left (unmount).
@@ -413,6 +441,10 @@ describe("SSH FS page", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const first = renderSlot<{ subPath: string }, typeof rpcContract>(app.navPanels[0]!, { subPath: "" }, {
@@ -475,6 +507,10 @@ describe("SSH FS page", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     let clock = 1_700_000_000_000;
@@ -528,6 +564,10 @@ describe("SSH FS page", () => {
           fs_mkdir: neverCalled,
           fs_delete: neverCalled,
           fs_rename: neverCalled,
+          terminal_open: neverCalled,
+          terminal_write: neverCalled,
+          terminal_resize: neverCalled,
+          terminal_close: neverCalled,
         },
       },
     );
@@ -567,6 +607,10 @@ describe("SSH FS browser", () => {
       },
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
@@ -603,6 +647,59 @@ describe("SSH FS browser", () => {
     slot.lifecycle.unmount();
   });
 
+  it("opens a remote terminal on the right-clicked folder via context menu", async () => {
+    const stubs = {
+      configs_list: () => ({
+        configs: [{ ...PROD_VIEW, connected: true }],
+      }),
+      configs_save: neverCalled,
+      secrets_set: neverCalled,
+      settings_get: () => ({ sessionRememberSeconds: 600 }),
+      mounts_connect: neverCalled,
+      mounts_disconnect: neverCalled,
+      mounts_test: neverCalled,
+      fs_list: () => ({
+        path: ".",
+        entries: [
+          { name: "docs", kind: "dir", size: 0, mtimeMs: 1, mode: 0o040755 },
+        ] as FsEntry[],
+        truncated: false,
+      }),
+      fs_read: neverCalled,
+      fs_write: neverCalled,
+      fs_mkdir: neverCalled,
+      fs_delete: neverCalled,
+      fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
+    };
+
+    const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
+      app.navPanels[0]!,
+      { subPath: "" },
+      { experimental_rpcContract: rpcContract, rpc: stubs },
+    );
+    await slot.findByText("docs");
+
+    // Right-click the folder → "Open terminal" appears in the context menu.
+    fireEvent.contextMenu(screen.getByRole("button", { name: "docs" }));
+    await screen.findByRole("menuitem", { name: "Open terminal" });
+    fireEvent.click(screen.getByRole("menuitem", { name: "Open terminal" }));
+
+    // The terminal tab opens with the right-clicked folder's path.
+    await waitFor(() => {
+      expect(slot.experimental_tabOpenCalls).toContainEqual(
+        expect.objectContaining({
+          tab: expect.objectContaining({ id: "terminal" }),
+          params: { mount: "prod", path: "docs" },
+        }),
+      );
+    });
+    slot.lifecycle.unmount();
+  });
+
   it("creates a file in the right-clicked folder (not cwd)", async () => {
     const writes: Array<{ path: string; content: string }> = [];
     const stubs = {
@@ -628,6 +725,10 @@ describe("SSH FS browser", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
@@ -676,6 +777,10 @@ describe("SSH FS browser", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
@@ -739,6 +844,10 @@ describe("SSH FS browser", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
@@ -794,6 +903,10 @@ describe("SSH FS browser", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
@@ -846,6 +959,10 @@ describe("SSH FS browser", () => {
         renames.push({ from, to });
         return { renamed: true };
       },
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
@@ -908,6 +1025,10 @@ describe("SSH FS browser", () => {
         renames.push({ from, to });
         return { renamed: true };
       },
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
@@ -963,6 +1084,10 @@ describe("SSH FS browser", () => {
         return { removed: true };
       },
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
@@ -1018,6 +1143,10 @@ describe("SSH FS browser", () => {
         return { removed: true };
       },
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const slot = renderSlot<{ subPath: string }, typeof rpcContract>(
@@ -1075,6 +1204,10 @@ describe("Remote file editor", () => {
           fs_mkdir: neverCalled,
           fs_delete: neverCalled,
           fs_rename: neverCalled,
+          terminal_open: neverCalled,
+          terminal_write: neverCalled,
+          terminal_resize: neverCalled,
+          terminal_close: neverCalled,
         },
       },
     );
@@ -1112,6 +1245,10 @@ describe("Remote file editor", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
 
     const first = renderSlot<{ subPath: string; params: unknown }, typeof rpcContract>(
@@ -1166,6 +1303,10 @@ describe("Remote file editor", () => {
           fs_mkdir: neverCalled,
           fs_delete: neverCalled,
           fs_rename: neverCalled,
+          terminal_open: neverCalled,
+          terminal_write: neverCalled,
+          terminal_resize: neverCalled,
+          terminal_close: neverCalled,
         },
       },
     );
@@ -1195,6 +1336,10 @@ describe("Remote file editor", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
     const slot = renderSlot<{ subPath: string; params: unknown }, typeof rpcContract>(
       { component: RemoteFileEditor },
@@ -1266,6 +1411,10 @@ describe("Remote file editor", () => {
       fs_mkdir: neverCalled,
       fs_delete: neverCalled,
       fs_rename: neverCalled,
+      terminal_open: neverCalled,
+      terminal_write: neverCalled,
+      terminal_resize: neverCalled,
+      terminal_close: neverCalled,
     };
     const slot = renderSlot<{ subPath: string; params: unknown }, typeof rpcContract>(
       { component: RemoteFileEditor },
@@ -1335,6 +1484,10 @@ describe("Remote file editor", () => {
             fs_mkdir: neverCalled,
             fs_delete: neverCalled,
             fs_rename: neverCalled,
+            terminal_open: neverCalled,
+            terminal_write: neverCalled,
+            terminal_resize: neverCalled,
+            terminal_close: neverCalled,
           },
         },
       );
@@ -1415,6 +1568,10 @@ describe("Remote file editor", () => {
             fs_mkdir: neverCalled,
             fs_delete: neverCalled,
             fs_rename: neverCalled,
+            terminal_open: neverCalled,
+            terminal_write: neverCalled,
+            terminal_resize: neverCalled,
+            terminal_close: neverCalled,
           },
         },
       );
@@ -1521,6 +1678,10 @@ describe("Remote file editor", () => {
           fs_mkdir: neverCalled,
           fs_delete: neverCalled,
           fs_rename: neverCalled,
+          terminal_open: neverCalled,
+          terminal_write: neverCalled,
+          terminal_resize: neverCalled,
+          terminal_close: neverCalled,
         },
       },
     );

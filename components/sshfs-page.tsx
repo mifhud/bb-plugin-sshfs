@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { useRealtime, useRpc } from "@get-bb/plugin-sdk/app";
 import { toast } from "sonner";
 import type { rpcContract } from "../server";
-import type { ConfigView, SshFsConfig } from "../contract";
+import { type ConfigView, type SshFsConfig, SSHF_CHANGED } from "../contract";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { cn } from "@/lib/utils";
@@ -23,8 +23,6 @@ import {
   setMountCwd,
 } from "./session-store";
 import { errorMessage } from "./utils";
-
-const SSHF_CHANGED = "sshfs-changed";
 
 function useConfigs() {
   const rpc = useRpc<typeof rpcContract>();

@@ -106,6 +106,12 @@ export const MAX_WRITE_CHARS = 2 * 1024 * 1024;
 /** Columns of the CLI `ls` table. */
 export const CLI_LIST_MAX_ENTRIES = 2000;
 
+/** Realtime channel the frontend refetches on (connection/config changes). */
+export const SSHF_CHANGED = "sshfs-changed";
+
+/** Realtime channel for SSH terminal output streaming. */
+export const SSHF_TERMINAL_DATA = "sshfs-terminal";
+
 // -- RPC contract ------------------------------------------------------------
 
 export const rpcContract = defineRpcContract({
@@ -192,5 +198,35 @@ export const rpcContract = defineRpcContract({
       to: z.string().min(1).max(4096),
     }),
     output: z.object({ renamed: z.boolean() }),
+  },
+  /** Open a PTY shell on the mount; returns a session ID the frontend uses for
+   * subsequent terminal_write/resize/close calls. Output streams via realtime. */
+  terminal_open: {
+    input: z.object({
+      mount: mountNameSchema,
+      path: z.string().min(1).max(4096),
+      cols: z.number().int().min(1),
+      rows: z.number().int().min(1),
+    }),
+    output: z.object({ sessionId: z.string() }),
+  },
+  /** Send keystrokes (or pasted text) to an open shell session. */
+  terminal_write: {
+    input: z.object({ sessionId: z.string(), data: z.string() }),
+    output: z.object({ written: z.boolean() }),
+  },
+  /** Resize the PTY of an open shell session. */
+  terminal_resize: {
+    input: z.object({
+      sessionId: z.string(),
+      cols: z.number().int().min(1),
+      rows: z.number().int().min(1),
+    }),
+    output: z.object({ resized: z.boolean() }),
+  },
+  /** Close a shell session, releasing the SSH channel. */
+  terminal_close: {
+    input: z.object({ sessionId: z.string() }),
+    output: z.object({ closed: z.boolean() }),
   },
 });

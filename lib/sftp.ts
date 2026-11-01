@@ -68,9 +68,25 @@ function call<Result>(invoke: (callback: NodeCallback<Result>) => void): Promise
   return promise;
 }
 
-// -- Session abstraction -----------------------------------------------------
+// -- Session abstraction ----------------------------------------------------
 
-/** Everything the server needs from a live SFTP connection. */
+/** One interactive shell (PTY) channel on an SSH connection. */
+export interface ShellChannel {
+  /** Unique ID shared with the frontend for RPC routing. */
+  id: string;
+  /** Write data (keystrokes or pasted text) to the shell's stdin. */
+  write(data: string): void;
+  /** Resize the PTY. */
+  resize(cols: number, rows: number): void;
+  /** Close the shell channel (idempotent). */
+  close(): void;
+  /** Register a listener for shell output (stdout + stderr merged). */
+  onData(callback: (data: string) => void): void;
+  /** Register a listener that fires when the channel closes. */
+  onClose(callback: () => void): void;
+}
+
+/** Everything the server needs from a live SSH connection (SFTP + shell). */
 export interface SftpSession {
   /** Literal `~`/`~/...` root expansion via a remote shell (POSIX servers). */
   expandHome(root: string): Promise<string>;
@@ -84,6 +100,8 @@ export interface SftpSession {
   mkdir(absPath: string): Promise<void>;
   delete(absPath: string): Promise<void>;
   rename(from: string, to: string): Promise<void>;
+  /** Open a PTY shell on the remote server. */
+  shell(cols: number, rows: number): Promise<ShellChannel>;
   /** Tear down the underlying SSH transport (idempotent). */
   close(): void;
 }
@@ -275,7 +293,55 @@ export function realSession(sftp: SFTPWrapper, client: Client): SftpSession {
     close() {
       client.end();
     },
+
+    async shell(cols, rows) {
+      const { promise, resolve, reject } = Promise.withResolvers<ShellChannel>();
+      client.shell(
+        { cols, rows, term: "xterm-256color" },
+        (err, stream) => {
+          if (err) {
+            reject(new SftpError(`Cannot open shell: ${err.message}`, { cause: err }));
+            return;
+          }
+          const id = crypto.randomUUID();
+          const dataCallbacks = new Set<(data: string) => void>();
+          const closeCallbacks = new Set<() => void>();
+          stream.on("data", (chunk: Buffer) => {
+            const data = chunk.toString("utf8");
+            for (const cb of dataCallbacks) cb(data);
+          });
+          stream.stderr.on("data", (chunk: Buffer) => {
+            const data = chunk.toString("utf8");
+            for (const cb of dataCallbacks) cb(data);
+          });
+          stream.on("close", () => {
+            for (const cb of closeCallbacks) cb();
+          });
+          const channel: ShellChannel = {
+            id,
+            write(data: string) {
+              stream.write(data);
+            },
+            resize(cols: number, rows: number) {
+              stream.setWindow(rows, cols, 0, 0);
+            },
+            close() {
+              stream.close();
+            },
+            onData(callback: (data: string) => void) {
+              dataCallbacks.add(callback);
+            },
+            onClose(callback: () => void) {
+              closeCallbacks.add(callback);
+            },
+          };
+          resolve(channel);
+        },
+      );
+      return promise;
+    },
   };
+
 }
 
 // -- Live connection ---------------------------------------------------------
@@ -296,11 +362,20 @@ interface Mount {
   root: string;
   info: MountInfo;
   leases: number;
+  /** Number of open shell (PTY) channels pinning the connection. */
+  shellCount: number;
   idleTimer: ReturnType<typeof setTimeout> | null;
   closed: boolean;
 }
 
 type ConnectSession = (options: ConnectConfig) => Promise<SftpSession>;
+
+/** One open shell (PTY) channel, tracked by the manager. */
+interface ShellEntry {
+  channel: ShellChannel;
+  mount: Mount;
+  closed: boolean;
+}
 
 /** Real ssh2-backed session factory (also used by the smoke test). */
 export const connectSession: ConnectSession = async (options) => {
@@ -320,6 +395,7 @@ export interface SftpManagerOptions {
 export class SftpManager {
   private readonly mounts = new Map<string, Mount>();
   private idleTimeoutMs: number;
+  private readonly shells = new Map<string, ShellEntry>();
   private readonly log: (line: string) => void;
   private readonly connectSession: ConnectSession;
 
@@ -413,6 +489,7 @@ export class SftpManager {
         connectedAt: Date.now(),
       },
       leases: 0,
+      shellCount: 0,
       idleTimer: null,
       closed: false,
     };
@@ -436,14 +513,78 @@ export class SftpManager {
     return true;
   }
 
+  /**
+   * Open a PTY shell on a mount. Reuses the existing SSH connection (or
+   * opens one). The caller is responsible for resolving paths and sending
+   * `cd <path>` via the returned channel's `write` method before publishing
+   * the session ID to the frontend.
+   */
+  async openShell(
+    name: string,
+    config: SshFsConfig,
+    connectOptions: ConnectConfig,
+    cols: number,
+    rows: number,
+  ): Promise<{ channel: ShellChannel; root: string }> {
+    const mount = await this.ensureConnected(name, config, connectOptions);
+    mount.shellCount += 1;
+    this.cancelIdleClose(mount);
+    const channel = await mount.session.shell(cols, rows);
+    const entry: ShellEntry = { channel, mount, closed: false };
+    this.shells.set(channel.id, entry);
+    channel.onClose(() => {
+      if (entry.closed) return;
+      entry.closed = true;
+      this.shells.delete(channel.id);
+      mount.shellCount = Math.max(0, mount.shellCount - 1);
+      this.scheduleIdleClose(mount);
+    });
+    return { channel, root: mount.root };
+  }
+
+  /** Write data (keystrokes) to an open shell session. */
+  shellWrite(sessionId: string, data: string): void {
+    const entry = this.shells.get(sessionId);
+    if (entry === undefined || entry.closed) {
+      throw new SftpError(`Shell session not found: ${sessionId}`);
+    }
+    entry.channel.write(data);
+  }
+
+  /** Resize the PTY of an open shell session. */
+  shellResize(sessionId: string, cols: number, rows: number): void {
+    const entry = this.shells.get(sessionId);
+    if (entry === undefined || entry.closed) {
+      throw new SftpError(`Shell session not found: ${sessionId}`);
+    }
+    entry.channel.resize(cols, rows);
+  }
+
+  /** Close a shell session, releasing its lease on the mount. */
+  shellClose(sessionId: string): boolean {
+    const entry = this.shells.get(sessionId);
+    if (entry === undefined || entry.closed) return false;
+    entry.closed = true;
+    entry.channel.close();
+    this.shells.delete(sessionId);
+    entry.mount.shellCount = Math.max(0, entry.mount.shellCount - 1);
+    this.scheduleIdleClose(entry.mount);
+    void this.log(`closed shell ${sessionId}`);
+    return true;
+  }
+
   closeAll(): void {
+    for (const entry of this.shells.values()) {
+      if (!entry.closed) entry.channel.close();
+    }
+    this.shells.clear();
     for (const mount of this.mounts.values()) {
       if (!mount.closed) this.closeMount(mount, "shutdown");
     }
   }
 
   private scheduleIdleClose(mount: Mount): void {
-    if (mount.leases > 0 || mount.closed || this.idleTimeoutMs <= 0) return;
+    if (mount.leases > 0 || mount.closed || this.idleTimeoutMs <= 0 || mount.shellCount > 0) return;
     mount.idleTimer = setTimeout(() => {
       if (mount.leases === 0 && !mount.closed) this.closeMount(mount, "idle");
     }, this.idleTimeoutMs);
@@ -460,6 +601,15 @@ export class SftpManager {
     if (mount.closed) return;
     mount.closed = true;
     this.cancelIdleClose(mount);
+    // Close any open shell channels for this mount before tearing down the SSH transport.
+    for (const [id, entry] of this.shells) {
+      if (entry.mount === mount && !entry.closed) {
+        entry.closed = true;
+        entry.channel.close();
+        this.shells.delete(id);
+      }
+    }
+    mount.shellCount = 0;
     try {
       mount.session.close();
     } catch (error) {
